@@ -6,9 +6,14 @@
   "scripts": {
     "start": "node scripts/serve.mjs",
     "build": "node scripts/build.mjs",
-    "test": "node --test tests/migration.test.mjs && playwright test"
+    "test": "node --test --test-concurrency=1 tests/migration.test.mjs tests/release.test.mjs && playwright test",
+    "audit:release": "node scripts/audit-release.mjs",
+    "preview:pages": "node scripts/serve.mjs --dist"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1"
+  },
+  "dependencies": {
+    "onnxruntime-web": "1.20.1"
   }
 }

@@ -3,14 +3,23 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 export const root = fileURLToPath(new URL('../', import.meta.url));
-export const publicFiles = [
+export const applicationFiles = [
   'index.html', 'css/app.css', 'js/v18-core.js', 'js/v18-dataset.js',
-  'js/v18-extensions.js', 'js/compatibility.js', 'js/data-compatibility.js',
+  'js/v18-extensions.js', 'js/compatibility.js', 'js/data-compatibility.js', 'js/model-sources.js',
+  'licenses/onnxruntime-MIT.txt', 'licenses/onnxruntime-ThirdPartyNotices.txt',
 ];
+export const runtimeFiles = ['ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm'];
+export const publicFiles = [...applicationFiles, ...runtimeFiles.map(name => 'vendor/onnxruntime/' + name)];
+export function sourcePath(relative) {
+  if (!publicFiles.includes(relative)) throw Error('公開許可リストにないファイルです: ' + relative);
+  return relative.startsWith('vendor/onnxruntime/')
+    ? path.join(root, 'node_modules/onnxruntime-web/dist', path.basename(relative))
+    : path.join(root, 'web', relative);
+}
 
 export async function build() {
   const destination = path.join(root, 'dist');
-  const allowedDirectories = new Set(['css', 'js']);
+  const allowedDirectories = new Set(['css', 'js', 'licenses', 'vendor', 'vendor/onnxruntime']);
   async function check(directory, prefix = '') {
     let entries;
     try { entries = await readdir(directory, { withFileTypes: true }); }
@@ -27,7 +36,7 @@ export async function build() {
   }
   await check(destination);
   for (const relative of publicFiles) {
-    const source = path.join(root, 'web', relative);
+    const source = sourcePath(relative);
     if (!(await lstat(source)).isFile()) throw Error(`通常ファイルではありません: ${relative}`);
     const target = path.join(destination, relative);
     await mkdir(path.dirname(target), { recursive: true });
