@@ -148,6 +148,7 @@ test('explicit regeneration requires separate training approval and never mutate
   expect(output.training_labels.accepted_tags).toEqual([]);
   expect(output.confirmed_tags).toEqual(record.confirmed_tags);
   expect(await page.evaluate(() => existingJson)).toEqual(record);
+  page.once('dialog', dialog => dialog.accept());
   await page.locator('#existing').setInputFiles(jsonFile('record-again.json',record));
   await expect(page.locator('#regenerateReview')).not.toBeChecked();
   await expect(page.locator('#trainingApprove')).toBeDisabled();
@@ -243,4 +244,95 @@ test('mobile-width form fits and the four review choices remain reachable', asyn
   expect(await page.locator('.review-state').first().locator('option').allTextContents()).toEqual(['未確認','正しい','間違い','不要']);
   await page.locator('#migrationProtection').scrollIntoViewIfNeeded();
   await page.screenshot({path:testInfo.outputPath('mobile-protection.png')});
+});
+
+// Synthetic fixtures only: the user's verification files never enter this test suite.
+async function importRecord(page, record) {
+  await page.locator('#existing').setInputFiles(jsonFile('synthetic.json', record));
+  await expect(page.locator('#existingInfo')).toContainText('読み込み成功');
+  await page.locator('details').evaluateAll(nodes => nodes.forEach(x => x.open = true));
+}
+
+test('JSON alone restores all saved states and no-op download round-trips every field', async ({ page }) => {
+  await openApp(page);
+  const record = sample();
+  record.ai_prediction.raw_predictions = record.ai_prediction.review_states.map(({name,category,score}) => ({name,category:String(category),score}));
+  record.ai_prediction.structured_suggestions = { series:'架空の作品', character_name:'架空人物', hair_style:['手動の提案'], extension:{keep:true} };
+  record.ai_prediction.raw_predictions[2].score = 0.01;
+  await importRecord(page, record);
+  expect(await page.evaluate(() => existingJson)).toEqual(record);
+  await expect(page.locator('.review-state')).toHaveCount(4);
+  for (const state of record.ai_prediction.review_states) await expect(page.locator(`.review-state[data-tag="${state.name}"]`)).toHaveValue(state.status);
+  await expect(page.locator('#storedTrainingStatus')).toContainText('学習承認済み');
+  await expect(page.locator('#series')).toHaveValue('架空の作品');
+  await expect(page.locator('#jp_hair_style')).toHaveValue('手動の提案');
+  expect(await page.evaluate(() => buildJson())).toEqual(record);
+  const pending=page.waitForEvent('download');await page.locator('#export').click();
+  const saved=await readDownload(await pending);
+  expect(saved).toEqual(record);
+  await page.reload();await importRecord(page,saved);
+  expect(await page.evaluate(() => buildJson())).toEqual(record);
+});
+
+for (const mode of ['tag_review', 'empty_states', 'review_lists', 'no_predictions']) {
+  test(`legacy ${mode} restores four states without adding or upgrading stored fields`, async ({ page }) => {
+    await openApp(page);
+    const record=sample();
+    const expected=structuredClone(record.ai_prediction.review_states);
+    record.ai_prediction.raw_predictions=expected.map(({name,category,score})=>({name,category,score}));
+    record.ai_prediction.tag_review=Object.fromEntries(['accepted','rejected','pending','excluded'].map(status=>[status,expected.filter(x=>x.status===status).map(x=>x.name)]));
+    for (const [status,tags] of Object.entries(record.ai_prediction.tag_review)) record.review[status+'_tags']=tags;
+    delete record.ai_prediction.review_states;
+    if (mode==='empty_states') record.ai_prediction.review_states=[];
+    if (mode==='review_lists') delete record.ai_prediction.tag_review;
+    if (mode==='no_predictions') {
+      delete record.ai_prediction.raw_predictions;delete record.review;delete record.training_labels;record.schema_version='1.0';
+    }
+    await importRecord(page,record);
+    for (const state of expected) await expect(page.locator(`.review-state[data-tag="${state.name}"]`)).toHaveValue(state.status);
+    expect(await page.evaluate(()=>buildJson())).toEqual(record);
+    expect(await page.evaluate(()=>existingJson)).toEqual(record);
+  });
+}
+
+test('ambiguous legacy confirmed tags are displayed pending, never promoted to training', async ({ page }) => {
+  await openApp(page);
+  const record={schema_version:'1.0',image_id:'IMG_0001',label_status:'user_confirmed',confirmed_tags:['old_auto_suggestion'],notes:'legacy'};
+  await importRecord(page,record);
+  await expect(page.locator('.review-state')).toHaveValue('pending');
+  await expect(page.locator('#storedTrainingStatus')).toContainText('承認情報なし');
+  expect(await page.evaluate(()=>buildJson())).toEqual(record);
+});
+
+test('existing proposal edit saves only deliberate changes and does not alter raw predictions', async ({ page }) => {
+  await openApp(page);
+  const record=sample();record.ai_prediction.extension={retain:'unknown'};
+  await importRecord(page,record);
+  await page.locator('.review-state[data-tag="smile"]').selectOption('rejected');
+  const output=await page.evaluate(()=>buildJson());
+  expect(output.review).toEqual(record.review);expect(output.training_labels).toEqual(record.training_labels);
+  expect(output.ai_prediction.raw_predictions).toEqual(record.ai_prediction.raw_predictions);
+  expect(output.ai_prediction.extension).toEqual(record.ai_prediction.extension);
+  expect(output.ai_prediction.tag_review.rejected).toContain('smile');
+  const pending=page.waitForEvent('download');await page.locator('#export').click();
+  await importRecord(page,await readDownload(await pending));
+  await expect(page.locator('.review-state[data-tag="smile"]')).toHaveValue('rejected');
+  expect(await page.evaluate(()=>existingJson.training_labels)).toEqual(record.training_labels);
+});
+
+test('canceling import keeps current edits and saved approval visible', async ({ page }) => {
+  await openApp(page);await importRecord(page,sample());
+  await page.locator('.review-state[data-tag="smile"]').selectOption('accepted');
+  const before=await page.evaluate(()=>buildJson());
+  page.once('dialog', dialog=>dialog.dismiss());
+  await page.locator('#existing').setInputFiles(jsonFile('different.json',{image_id:'IMG_0002'}));
+  expect(await page.evaluate(()=>buildJson())).toEqual(before);
+  await expect(page.locator('#storedTrainingStatus')).toContainText('学習承認済み');
+});
+
+test('batch progress does not count excluded tags as pending', async ({ page }) => {
+  await openApp(page);
+  const record=sample();
+  const result=await page.evaluate(json=>v11Analyze(json,{name:'synthetic.json'}),record);
+  expect(result.pending).toBe(1);expect(result.accepted).toBe(1);expect(result.rejected).toBe(1);
 });
