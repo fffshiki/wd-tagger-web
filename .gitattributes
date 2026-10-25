@@ -1,2 +1,5 @@
 * text=auto eol=lf
 baseline/v18-original.html -text
+web/index.html -text
+web/css/app.css -text
+web/js/v18-*.js -text
