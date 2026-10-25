@@ -13,6 +13,7 @@
 /web/css/*
 !/web/css/app.css
 !/web/css/tag-catalog.css
+!/web/css/translation-workspace.css
 !/web/js/
 /web/js/*
 !/web/js/v18-core.js
@@ -26,6 +27,7 @@
 !/web/licenses/onnxruntime-MIT.txt
 !/web/licenses/onnxruntime-ThirdPartyNotices.txt
 !/web/js/tag-catalog.js
+!/web/js/translation-workspace.js
 !/scripts/
 /scripts/*
 !/scripts/build.mjs
@@ -39,6 +41,7 @@
 !/tests/runtime.test.mjs
 !/tests/release.test.mjs
 !/tests/tag-catalog.test.mjs
+!/tests/translation-workspace.test.mjs
 !/docs/
 /docs/*
 !/docs/COMPATIBILITY.md

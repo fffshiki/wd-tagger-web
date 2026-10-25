@@ -1,0 +1,13 @@
+#translationWorkspace .workspace-actions { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+#translationWorkspace button, #tagCatalog .candidate-edit { min-height:44px; }
+#tagCatalog .candidate-select { display:flex; align-items:center; gap:10px; min-height:44px; }
+#tagCatalog .candidate-select input { width:24px; height:24px; flex-shrink:0; }
+#tagCatalog .candidate-status { background:#eef3fa; padding:8px; border-radius:8px; }
+#translationWorkspace [role=alert] { color:#972e18; font-weight:650; overflow-wrap:anywhere; }
+#translationWorkspace textarea { min-height:100px; }
+#translationWorkspace .workspace-box { border:1px solid #c7d2e2; border-radius:10px; padding:12px; margin:12px 0; }
+#translationWorkspace code { overflow-wrap:anywhere; }
+#translationWorkspace ul { padding-left:22px; }
+#translationWorkspace li { margin:8px 0; overflow-wrap:anywhere; }
+#translationWorkspace .workspace-preview { max-height:360px; overflow:auto; }
+#translationWorkspace select { min-height:44px; }

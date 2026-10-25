@@ -33,13 +33,14 @@ test('HTML retains original markup and classic script execution order', async ()
   let i = 0;
   const expected = source.replace(/<style>[\s\S]*?<\/style>/, '<link rel="stylesheet" href="./css/app.css">')
     .replace(/<script>[\s\S]*?<\/script>/g, () => `<script src="./js/${names[i++]}"></script>`)
-    .replace('</head>', '<link rel="stylesheet" href="./css/tag-catalog.css"></head>')
-    .replace('</body>', '<script src="./js/compatibility.js"></script><script src="./js/data-compatibility.js"></script><script src="./js/model-sources.js"></script><script src="./js/tag-catalog.js"></script></body>');
+    .replace('</head>', '<link rel="stylesheet" href="./css/tag-catalog.css"><link rel="stylesheet" href="./css/translation-workspace.css"></head>')
+    .replace('</body>', '<script src="./js/compatibility.js"></script><script src="./js/data-compatibility.js"></script><script src="./js/model-sources.js"></script><script src="./js/tag-catalog.js"></script><script src="./js/translation-workspace.js"></script></body>');
   assert.equal(await readFile(new URL('../web/index.html', import.meta.url), 'utf8'), expected);
   new Script(await readFile(new URL('../web/js/compatibility.js', import.meta.url), 'utf8'));
   new Script(await readFile(new URL('../web/js/data-compatibility.js', import.meta.url), 'utf8'));
   new Script(await readFile(new URL('../web/js/model-sources.js', import.meta.url), 'utf8'));
   new Script(await readFile(new URL('../web/js/tag-catalog.js', import.meta.url), 'utf8'));
+  new Script(await readFile(new URL('../web/js/translation-workspace.js', import.meta.url), 'utf8'));
 });
 
 test('private artifacts are ignored by Git while source and tests are allowed', () => {

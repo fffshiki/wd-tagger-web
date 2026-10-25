@@ -11,7 +11,7 @@ export const repositoryFiles = [
   'package.json', 'package-lock.json', 'playwright.config.mjs',
   'scripts/build.mjs', 'scripts/serve.mjs', 'scripts/audit-release.mjs',
   'tests/browser.test.mjs', 'tests/data-compatibility.test.mjs', 'tests/migration.test.mjs',
-  'tests/runtime.test.mjs', 'tests/release.test.mjs', 'tests/tag-catalog.test.mjs',
+  'tests/runtime.test.mjs', 'tests/release.test.mjs', 'tests/tag-catalog.test.mjs', 'tests/translation-workspace.test.mjs',
   ...publicFiles.filter(name => !name.startsWith('vendor/')).map(name => 'web/' + name),
 ].sort();
 

@@ -1,11 +1,11 @@
 'use strict';
 
 // Read-only projection of CSV + existing translations. No dictionary/storage writes.
-// Candidate generation and human confirmation belong to a separate future workspace,
+// Candidate editing and human confirmation belong to a separate workspace,
 // never to v15Custom or teacher review/training_labels.
 (() => {
   const labels = Object.freeze({
-    japanese_present: '日本語訳あり', adopted_latin: '採用済み略語',
+    japanese_present: '日本語訳あり', adopted_latin: '採用済み略語・原語',
     provisional: '暫定訳', untranslated: '未翻訳', needs_review: '表記の要確認',
   });
   const sources = Object.freeze({ registered: '登録辞書', cache: 'オンラインキャッシュ', local_rule: '端末内ルール', builtin: '内蔵辞書', raw: '原語表示' });
@@ -13,7 +13,7 @@
   const groupOf = category => categoryGroups.get(String(category)) || 'other';
   const groups = Object.freeze({ general: '一般', character: 'キャラクター', rating: 'レーティング', other: 'その他' });
   const statusCounts = () => Object.fromEntries(Object.keys(labels).map(key => [key, 0]));
-  let rows = [], entries = [], sequence = 0, pageNumber = 1, searchTimer, refreshTimer;
+  let rows = [], entries = [], visible = [], viewAdapter = null, sequence = 0, pageNumber = 1, searchTimer, refreshTimer;
   const pageSize = 50;
 
   function project(input) {
@@ -44,11 +44,11 @@
   }
   function filter(input, options = {}) {
     const query = String(options.query || '').trim().toLowerCase();
-    return input.filter(entry => (!query || entry.searchText.includes(query)) &&
+    return input.filter(entry => (!query || entry.searchText.includes(query) || viewAdapter?.search(entry.name, query)) &&
       (!options.group || options.group === 'all' || entry.group === options.group) &&
       (!options.status || options.status === 'all' || (options.status === 'unresolved' ? entry.unresolved : entry.status === options.status)) &&
       (!options.source || options.source === 'all' || entry.source === options.source) &&
-      (!options.originalOnly || Boolean(entry.originalSuggestion)));
+      (!options.originalOnly || Boolean(entry.originalSuggestion)) && (!viewAdapter || viewAdapter.includes(entry.name)));
   }
 
   const panel = document.createElement('section'); panel.id = 'tagCatalog';
@@ -57,7 +57,7 @@
     <p>②のCSVを選ぶと、画像解析なしで全タグを確認できます。辞書の読み込み後は自動で再集計します。この一覧は辞書・教師データを変更しません。</p>
     <p id="catalogLoad" role="status">②でselected_tags.csvを選択してください。</p>
     <div id="catalogSummary"></div>
-    <p class="muted">「日本語訳あり」は人による確認済みを意味しません。暫定登録と表示に使われた訳は別に管理します。候補生成・承認は今後追加します。</p>
+    <p class="muted">「日本語訳あり」は人による確認済みを意味しません。暫定登録と表示に使われた訳は別に管理します。</p>
     <div class="catalog-filters">
       <label>検索（英語・表示名・登録値）<input id="catalogSearch" class="field" type="search" placeholder="例：hair、髪" disabled></label>
       <label>分類<select id="catalogGroup" class="field" disabled><option value="all">すべての分類</option><option value="general">一般</option><option value="character">キャラクター</option><option value="rating">レーティング</option><option value="other">その他</option></select></label>
@@ -89,17 +89,19 @@
     $('catalogPrev').disabled = pageNumber <= 1; $('catalogNext').disabled = pageNumber >= pages;
     $('catalogPrevBottom').disabled = pageNumber <= 1; $('catalogNextBottom').disabled = pageNumber >= pages;
     const fragment = document.createDocumentFragment();
-    for (const entry of matching.slice(start, start + pageSize)) {
+    visible = matching.slice(start, start + pageSize);
+    for (const entry of visible) {
       const item = document.createElement('li'); item.dataset.index = entry.index;
       addText(item, 'strong', entry.name, 'catalog-name');
       addText(item, 'p', `表示：${entry.displayed}`);
       addText(item, 'p', `${groups[entry.group]}（category ${entry.category || '未指定'}） / ${labels[entry.status]} / ${sources[entry.source]}`);
       addText(item, 'p', `辞書登録：${entry.registered === undefined ? 'なし' : entry.registered}（${labels[entry.registeredStatus]}）`, 'muted');
-      if (entry.protectedExisting) addText(item, 'small', '既存訳を保護・人による確認履歴なし');
+      if (entry.protectedExisting) addText(item, 'small', '既存訳を保護・候補の確認状態は作業データで管理');
       if (entry.originalSuggestion) addText(item, 'small', '記号・数字の候補：原語の正式採用は未確認');
       fragment.appendChild(item);
     }
     $('catalogList').replaceChildren(fragment);
+    window.dispatchEvent(new Event('wdtagcatalogrender'));
   }
   function rebuild() {
     entries = project(rows);
@@ -151,6 +153,9 @@
     version: 1, pageSize,
     snapshot: () => structuredClone(entries), summary: () => summarize(entries),
     query: options => structuredClone(filter(entries, options)),
+    visible: () => structuredClone(visible),
+    setViewAdapter: adapter => { viewAdapter = adapter; pageNumber = 1; renderPage(); },
+    refreshView: () => { renderPage(); },
   });
   rebuild();
 })();
