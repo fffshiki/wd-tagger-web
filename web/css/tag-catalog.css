@@ -1,0 +1,9 @@
+#tagCatalog .catalog-filters { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px 12px; }
+#tagCatalog .catalog-filters label { min-width:0; }
+#tagCatalog #catalogList { list-style:none; padding:0; }
+#tagCatalog #catalogList li { padding:12px 0; border-bottom:1px solid #dce3ee; overflow-wrap:anywhere; }
+#tagCatalog #catalogList p { margin:5px 0; font-size:14px; }
+#tagCatalog #catalogList small { display:block; margin-top:5px; }
+#tagCatalog .catalog-name { font-family:ui-monospace,monospace; }
+#tagCatalog #catalogSummary { background:#edf2f8; padding:10px; border-radius:8px; }
+@media (max-width:480px) { #tagCatalog .catalog-filters { grid-template-columns:1fr; } }

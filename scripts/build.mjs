@@ -4,7 +4,7 @@ import path from 'node:path';
 
 export const root = fileURLToPath(new URL('../', import.meta.url));
 export const applicationFiles = [
-  'index.html', 'css/app.css', 'js/v18-core.js', 'js/v18-dataset.js',
+  'index.html', 'css/app.css', 'css/tag-catalog.css', 'js/tag-catalog.js', 'js/v18-core.js', 'js/v18-dataset.js',
   'js/v18-extensions.js', 'js/compatibility.js', 'js/data-compatibility.js', 'js/model-sources.js',
   'licenses/onnxruntime-MIT.txt', 'licenses/onnxruntime-ThirdPartyNotices.txt',
 ];

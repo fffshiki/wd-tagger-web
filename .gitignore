@@ -12,6 +12,7 @@
 !/web/css/
 /web/css/*
 !/web/css/app.css
+!/web/css/tag-catalog.css
 !/web/js/
 /web/js/*
 !/web/js/v18-core.js
@@ -37,6 +38,7 @@
 !/tests/data-compatibility.test.mjs
 !/tests/runtime.test.mjs
 !/tests/release.test.mjs
+!/tests/tag-catalog.test.mjs
 !/docs/
 /docs/*
 !/docs/COMPATIBILITY.md
