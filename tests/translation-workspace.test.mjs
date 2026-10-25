@@ -223,6 +223,10 @@ test('iPhone-sized layout and explicit spelling use safe text without teacher si
   await expect(page.locator('#catalogList img')).toHaveCount(0);
   expect(await page.locator('#translationWorkspace').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
   expect(await page.locator('#workspaceSaveCandidate').evaluate(node => node.getBoundingClientRect().height)).toBeGreaterThanOrEqual(44);
+  // Native controls and font metrics vary between Windows and Linux WebKit.
+  await page.locator('#workspaceImport').evaluate(input => { input.parentElement.style.width = '600px'; });
+  await page.locator('#translationWorkspace').evaluate(node => { node.style.fontFamily = 'monospace'; });
+  expect(await page.locator('#translationWorkspace').evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
   expect(await page.evaluate(() => existingJson)).toBeNull(); expect(external).toEqual([]);
 });
 

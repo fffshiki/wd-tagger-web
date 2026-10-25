@@ -11,3 +11,7 @@
 #translationWorkspace li { margin:8px 0; overflow-wrap:anywhere; }
 #translationWorkspace .workspace-preview { max-height:360px; overflow:auto; }
 #translationWorkspace select { min-height:44px; }
+#translationWorkspace { min-width:0; overflow-wrap:anywhere; }
+#translationWorkspace .workspace-actions > *, #translationWorkspace .workspace-box { min-width:0; max-width:100%; box-sizing:border-box; }
+#translationWorkspace button, #translationWorkspace select, #translationWorkspace textarea { min-width:0; max-width:100%; box-sizing:border-box; white-space:normal; overflow-wrap:anywhere; }
+#translationWorkspace input[type=file] { display:block; width:100%; min-width:0; max-width:100%; box-sizing:border-box; }
