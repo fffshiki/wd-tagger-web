@@ -35,6 +35,43 @@ try { const saved = localStorage.getItem(v15StorageKey); v15Custom = dataMapping
 catch { $('v15Notice').textContent = '端末内辞書を完全に復元できません。辞書JSONから復元してください。'; }
 try { v17Cache = dataMapping(v17Cache); } catch { v17Cache = Object.create(null); }
 
+// Explicitly adopted spellings, not a blanket acceptance of Latin-only dictionary values.
+// The pairs validate candidates; they do not create missing dictionary entries.
+const adoptedLatinTranslations = Object.freeze({ virtual_youtuber: 'VTuber', bdsm: 'BDSM', science_fiction: 'SF' });
+function isAdoptedLatinTranslation(tag, value) {
+  return Object.hasOwn(adoptedLatinTranslations, tag) && typeof value === 'string' && value.trim() === adoptedLatinTranslations[tag];
+}
+const dataLegacyLooksUntranslated = v18LooksUntranslated;
+v18LooksUntranslated = function (tag, value) {
+  return isAdoptedLatinTranslation(tag, value) ? false : dataLegacyLooksUntranslated(tag, value);
+};
+function usableTranslation(tag, value) {
+  return typeof value === 'string' && Boolean(value.trim()) && !v18LooksUntranslated(tag, value);
+}
+function getBuiltInTranslation(tag) {
+  // Never call the captured v15 translator here: it consults v15Custom again and
+  // can return the same provisional value instead of reaching the built-in maps.
+  for (const dictionary of [v15Seed, v14Translations, jpNames, v8Translations]) {
+    if (Object.hasOwn(dictionary, tag) && usableTranslation(tag, dictionary[tag])) return dictionary[tag];
+  }
+  return '';
+}
+function resolveTranslation(tag) {
+  const candidates = [
+    ['registered', Object.hasOwn(v15Custom, tag) ? v15Custom[tag] : ''],
+    ['cache', Object.hasOwn(v17Cache, tag) ? v17Cache[tag] : ''],
+    ['local_rule', v17Local(tag)],
+    ['builtin', getBuiltInTranslation(tag)],
+  ];
+  for (const [source, value] of candidates) {
+    if (usableTranslation(tag, value)) return { value, source, status: classifyTranslationValue(tag, value) };
+  }
+  return { value: tag.replaceAll('_', ' '), source: 'raw', status: 'untranslated' };
+}
+v18Resolved = function (tag) { return resolveTranslation(tag).value; };
+translateTag = v18Resolved;
+v17IsPending = function (tag) { return resolveTranslation(tag).source === 'raw'; };
+
 let dictionaryImportSequence = 0;
 $('v15Import').addEventListener('change', async event => {
   event.stopImmediatePropagation();
@@ -104,18 +141,19 @@ function classifyTranslationValue(tag, value) {
   const text = typeof value === 'string' ? value.trim() : '';
   if (!text) return 'untranslated';
   if (v17Bad.test(text)) return 'provisional';
+  if (isAdoptedLatinTranslation(tag, text)) return 'adopted_latin';
   if (v18LooksUntranslated(tag, text)) return 'untranslated';
   return /[\u3040-\u30ff\u3400-\u9fff]/.test(text) ? 'japanese_present' : 'needs_review';
 }
 function getTranslationCatalog(rows = tagRows) {
   return rows.map((row, index) => {
     const tag = row.name, registered = Object.hasOwn(v15Custom, tag) ? v15Custom[tag] : undefined;
-    const displayed = translateTag(tag);
-    return { index, name: tag, category: row.category, registered, registeredStatus: classifyTranslationValue(tag, registered), displayed, displayStatus: classifyTranslationValue(tag, displayed) };
+    const resolved = resolveTranslation(tag), displayed = resolved.value;
+    return { index, name: tag, category: row.category, registered, registeredStatus: classifyTranslationValue(tag, registered), displayed, displayStatus: resolved.status, source: resolved.source };
   });
 }
 function getDictionaryStatusCounts() {
-  const counts = { untranslated: 0, provisional: 0, japanese_present: 0, needs_review: 0 };
+  const counts = { untranslated: 0, provisional: 0, japanese_present: 0, adopted_latin: 0, needs_review: 0 };
   for (const [tag, value] of Object.entries(v15Custom)) counts[classifyTranslationValue(tag, value)]++;
   return counts;
 }
@@ -175,5 +213,15 @@ v16Render = function () {
       if (!saved) $('v16Msg').textContent = '端末保存に失敗したためJSONを保存してください。';
     }, { capture: true });
   });
+};
+const dataPreviousTranslationRefresh = v15Refresh;
+v15Refresh = function () {
+  dataPreviousTranslationRefresh();
+  // Refresh labels in place: retain the historical counts, order, source tag IDs
+  // and current user edits. Do not rerun aggregation or recreate table rows.
+  for (const row of document.querySelectorAll('#histResults tr[title], #histAll tr[title]')) {
+    const label = row.querySelector('td');
+    if (label) label.textContent = translateTag(row.title);
+  }
 };
 v15Refresh(); v16Render();

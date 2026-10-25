@@ -63,7 +63,7 @@ test('translation statuses distinguish English, provisional text, Japanese candi
   await page.goto('/');
   const dictionary={format:'wdtagger_japanese_dictionary',version:1,translations:{english:'english',provisional:'暫定訳：仮の訳',original:'固有名詞・専門用語（原語）：Name',japanese:'日本語の候補',empty:'',symbol:'★'}};
   await importDictionary(page,dictionary);
-  expect(await page.evaluate(()=>getDictionaryStatusCounts())).toEqual({untranslated:2,provisional:2,japanese_present:1,needs_review:1});
+  expect(await page.evaluate(()=>getDictionaryStatusCounts())).toEqual({untranslated:2,provisional:2,japanese_present:1,adopted_latin:0,needs_review:1});
   expect(await exported(page,'#v15Export')).toEqual(dictionary);
 });
 
@@ -125,4 +125,86 @@ test('deleting one imported outfit without an ID cannot delete other entries',as
   await importOutfits(page,data);
   page.once('dialog',dialog=>dialog.accept());await page.locator('#v16List button').first().click();
   expect((await exported(page,'#v16Export')).outfits).toEqual([data.outfits[1]]);
+});
+
+test('provisional entries cannot mask built-in translations and remain provisional on export',async({page})=>{
+  await page.goto('/');
+  const dictionary={format:'wdtagger_japanese_dictionary',version:1,translations:{
+    light_particles:'固有名詞・専門用語（原語）：light particles',epaulettes:'暫定訳：epaulettes',jeans:'【要確認】jeans',synthetic_untranslated:'暫定訳：synthetic untranslated',
+  }};
+  await importDictionary(page,dictionary);
+  const display=await page.evaluate(()=>Object.fromEntries(['light_particles','epaulettes','jeans','synthetic_untranslated'].map(tag=>[tag,{label:translateTag(tag),pending:v17IsPending(tag)}])));
+  expect(display.light_particles).toEqual({label:'光の粒',pending:false});
+  expect(display.epaulettes).toEqual({label:'肩章',pending:false});
+  expect(display.jeans).toEqual({label:'ジーンズ',pending:false});
+  expect(display.synthetic_untranslated).toEqual({label:'synthetic untranslated',pending:true});
+  const catalog=await page.evaluate(()=>getTranslationCatalog([{name:'light_particles',category:'0'}])[0]);
+  expect(catalog.registeredStatus).toBe('provisional');expect(catalog.displayStatus).toBe('japanese_present');
+  expect((await page.evaluate(()=>getDictionaryStatusCounts())).provisional).toBe(4);
+  expect(await exported(page,'#v15Export')).toEqual(dictionary);
+});
+
+test('adopted Latin labels differ from unreviewed English tags and are not sent for translation',async({page})=>{
+  const requests=[];
+  await page.route('https://api.mymemory.translated.net/**',async route=>{requests.push(route.request().url());await route.abort();});
+  await page.goto('/');
+  const dictionary={format:'wdtagger_japanese_dictionary',version:1,translations:{virtual_youtuber:'VTuber',bdsm:'BDSM',synthetic_raw_tag:'synthetic raw tag',synthetic_other:'SF'}};
+  await importDictionary(page,dictionary);
+  const labels=await page.evaluate(()=>['virtual_youtuber','bdsm','science_fiction'].map(tag=>({tag,label:translateTag(tag),pending:v17IsPending(tag)})));
+  expect(labels).toEqual([{tag:'virtual_youtuber',label:'VTuber',pending:false},{tag:'bdsm',label:'BDSM',pending:false},{tag:'science_fiction',label:'SF',pending:false}]);
+  expect(await page.evaluate(()=>v17IsPending('synthetic_raw_tag'))).toBe(true);
+  expect(await page.evaluate(()=>v17IsPending('synthetic_other'))).toBe(true);
+  await page.locator('#v17Online').check();await page.evaluate(()=>v17TranslateList(['virtual_youtuber','bdsm','science_fiction']));
+  expect(requests).toEqual([]);
+  const stats=await page.evaluate(()=>getDictionaryStatusCounts());expect(stats.adopted_latin).toBe(2);expect(stats.untranslated).toBe(2);
+  expect(await exported(page,'#v15Export')).toEqual(dictionary);
+});
+
+test('raw lower-case acronym and placeholders are not implicitly adopted',async({page})=>{
+  await page.goto('/');
+  const dictionary={format:'wdtagger_japanese_dictionary',version:1,translations:{bdsm:'bdsm',virtual_youtuber:'virtual youtuber',synthetic_tag:'暫定訳：SF'}};
+  await importDictionary(page,dictionary);
+  expect(await page.evaluate(()=>v17IsPending('bdsm'))).toBe(true);
+  expect(await page.evaluate(()=>v17IsPending('virtual_youtuber'))).toBe(true);
+  expect(await page.evaluate(()=>classifyTranslationValue('synthetic_tag',v15Custom.synthetic_tag))).toBe('provisional');
+  expect(await exported(page,'#v15Export')).toEqual(dictionary);
+});
+
+test('manual Japanese labels retain priority over adopted Latin, cache and built-in fallbacks',async({page})=>{
+  await page.goto('/');
+  await page.evaluate(()=>{v17Cache.virtual_youtuber='古い自動訳';v17Cache.light_particles='古いキャッシュ';});
+  const dictionary={format:'wdtagger_japanese_dictionary',version:1,translations:{virtual_youtuber:'手動の配信者訳',science_fiction:'手動の空想科学訳',light_particles:'手動の光粒訳'}};
+  await importDictionary(page,dictionary);
+  for(const [tag,label] of Object.entries(dictionary.translations))expect(await page.evaluate(tag=>translateTag(tag),tag)).toBe(label);
+  expect(await exported(page,'#v15Export')).toEqual(dictionary);
+});
+
+test('dictionary import, manual editing and reverting refresh both existing history tables without changing counts',async({page})=>{
+  await page.goto('/');
+  await page.evaluate(()=>{
+    histTable($('histResults'),[{tag:'holding',yes:7,no:3}]);histTable($('histAll'),[{tag:'holding',yes:7,no:3}]);
+    for(const id of ['histResults','histAll'])document.querySelector('#'+id+' tr[title]').dataset.preserved='yes';
+    $('histStatus').textContent='history counters stay unchanged';lastTags=[{name:'holding',category:'0',score:0.9}];renderEditor();
+  });
+  await importDictionary(page,{format:'wdtagger_japanese_dictionary',version:1,translations:{holding:'辞書で持つ'}});
+  for(const id of ['histResults','histAll'])await expect(page.locator('#'+id+' tr[title] td').first()).toHaveText('辞書で持つ');
+  await page.locator('details').evaluateAll(nodes=>nodes.forEach(n=>n.open=true));
+  const row=page.locator('.tagline').filter({has:page.locator('.review-state[data-tag="holding"]')});
+  await row.getByRole('button',{name:'訳を編集'}).click();await row.locator('.v15Editor input').fill('手動で持つ');await row.getByRole('button',{name:'この訳を登録'}).click();
+  for(const id of ['histResults','histAll']){
+    await expect(page.locator('#'+id+' tr[title] td').first()).toHaveText('手動で持つ');
+    await expect(page.locator('#'+id+' tr[title]')).toHaveAttribute('data-preserved','yes');
+    expect(await page.locator('#'+id+' tr[title] td').allTextContents()).toEqual(['手動で持つ','7','3']);
+  }
+  await row.getByRole('button',{name:'訳を編集'}).click();await row.getByRole('button',{name:'標準訳に戻す'}).click();
+  for(const id of ['histResults','histAll'])await expect(page.locator('#'+id+' tr[title] td').first()).toHaveText('holding');
+  await expect(page.locator('#histStatus')).toHaveText('history counters stay unchanged');
+});
+
+test('online cache updates refresh history labels without reinterpreting historical judgments',async({page})=>{
+  await page.route('https://api.mymemory.translated.net/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({responseStatus:200,responseData:{translatedText:'オンラインの仮訳'}})}));
+  await page.goto('/');
+  await page.evaluate(()=>histTable($('histAll'),[{tag:'synthetic_history',yes:2,no:1}]));
+  await page.locator('#v17Online').check();await page.evaluate(()=>v17TranslateList(['synthetic_history']));
+  expect(await page.locator('#histAll tr[title] td').allTextContents()).toEqual(['オンラインの仮訳','2','1']);
 });
