@@ -1,0 +1,568 @@
+<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>WD Tagger 教師データ作成 v18</title><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;max-width:700px;margin:18px auto;padding:0 15px;background:#f6f8fb;color:#162237}h1{font-size:1.35rem}section{background:white;border:1px solid #dce3ee;border-radius:14px;padding:15px;margin:13px 0}label{display:block;font-weight:650;margin-bottom:9px}input[type=file]{max-width:100%}p{line-height:1.6}small,.muted{color:#526073}#preview{display:block;max-width:100%;max-height:260px;object-fit:contain;margin-top:10px;border-radius:8px}button{font-size:1rem;border:0;border-radius:10px;padding:12px 18px;background:#155fbb;color:white;font-weight:650}button:disabled{opacity:.5}#log{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf2f8;padding:12px;border-radius:9px;min-height:80px;font-size:.9rem}#tagsOut{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}progress{width:100%} .field{display:block;width:100%;box-sizing:border-box;padding:10px;border:1px solid #c7d2e2;border-radius:8px;font-size:16px;margin:6px 0 12px} .tagline{display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #e7ebf2} .tagline input{width:19px;height:19px} .tagline span{overflow-wrap:anywhere} .taggroup{margin-top:14px;border-top:1px solid #ddd;padding-top:8px} .actions{display:flex;flex-wrap:wrap;gap:8px} .secondary{background:#526579} .warning{color:#a23d23} .compact{display:grid;grid-template-columns:1fr 1fr;gap:10px} .compact>div{min-width:0} .jpitem{border:1px solid #dce3ee;border-radius:10px;padding:10px;margin:9px 0} .jpitem .hint{font-size:12px;color:#64748b} details{margin:12px 0} summary{font-weight:700;cursor:pointer;padding:10px;background:#edf2f8;border-radius:9px} .mini-preview{max-width:100%;max-height:230px;object-fit:contain;border-radius:9px} .tagline{font-weight:400;justify-content:space-between;flex-wrap:wrap} .tagline select{font-size:16px;min-height:38px;border:1px solid #c7d2e2;border-radius:8px;background:#fff;padding:5px} .tagline .taglabel{flex:1;min-width:130px} .review-help{font-size:13px;color:#526073} .review-summary{font-weight:650;background:#edf2f8;padding:10px;border-radius:8px;margin:10px 0} .edit-note{font-size:13px;color:#526073} textarea{min-height:80px} </style></head><body><h1>WD Tagger — 教師データ作成 v18</h1><p>画像・モデル・CSVは端末内で処理し、サーバーにアップロードしません。<strong>この検証版は実行エンジンの取得に初回インターネット接続が必要</strong>です。完全オフライン版ではありません。大容量モデルのためメモリ不足で停止する可能性があります。</p><section><label for="model">① model.onnx</label><input id="model" type="file" accept=".onnx,application/octet-stream"><p id="modelInfo" class="muted">未選択</p></section><section><label for="csv">② selected_tags.csv</label><input id="csv" type="file" accept=".csv,text/csv,text/plain"><p id="csvInfo" class="muted">未選択</p></section><section><label for="img">③ テスト画像</label><input id="img" type="file" accept="image/*"><img id="preview" hidden alt="画像プレビュー"><p id="imgInfo" class="muted">未選択</p></section><section><button id="run" disabled>解析を開始</button><p><small>3つのファイルを選ぶと開始できます。解析中はこの画面を閉じないでください。</small></p><progress id="progress" hidden></progress><div id="log" role="status">準備中：ファイルを選択してください。</div></section><section><strong>解析結果（確率の高い順）</strong><div id="tagsOut">まだ解析していません。</div><button id="copy" hidden>タグをコピー</button></section><section><strong>④ 教師データ編集・JSON出力</strong><p class="muted">AIの予測は仮ラベルです。各タグを「未確認・正しい・間違い」に分類し、正しいタグだけを教師データに登録します。既存の確認済みJSONを読み込んだ場合は、AI予測を別欄に保存し、確認済みデータを維持します。v15では日本語訳の編集・辞書の保存と復元に対応しました。正式タグ名は英語のまま保存します。</p><label for="existing">既存JSON（任意・上書き防止用）</label><input id="existing" type="file" accept=".json,application/json"><p id="existingInfo" class="muted">未選択：新規作成モード</p><label for="charName">キャラクター名（確認・修正）</label><input class="field" id="charName" placeholder="例：鶴巻こころ"><label for="series">作品名（任意）</label><input class="field" id="series" placeholder="例：BanG Dream!"><label for="notes">メモ</label><textarea class="field" id="notes" placeholder="必要に応じて追記"></textarea><div id="jpEditor"><p class="muted">解析すると日本語の項目別編集欄が表示されます。</p></div><details><summary>詳細タグ（日本語・スコア・判定）を表示</summary><div id="editor">まず画像を解析してください。</div></details><label for="custom">追加したいタグ（カンマ区切り）</label><input class="field" id="custom" placeholder="例：straight_bangs, pink_hearts"><label><input type="checkbox" id="confirm"> 編集内容を確認済みとして保存する</label><p class="warning" id="protect"></p><p id="dirtyStatus" class="warning">変更なし</p><div class="actions"><button id="export" disabled>JSONを作成・保存</button><button id="copyjson" class="secondary" disabled>JSONをコピー</button></div><p id="exportInfo" class="muted"></p></section><script>
+'use strict';
+const $=id=>document.getElementById(id);let tagRows=[],lastTags=[],existingJson=null,generatedJson='';
+let cachedSession=null,cachedModelFile=null,analysisBusy=false,dirty=false,analysisImageFile=null;
+function markDirty(){dirty=true;const n=$('dirtyStatus');if(n)n.textContent='未保存の編集があります';}
+function clearDirty(){dirty=false;const n=$('dirtyStatus');if(n)n.textContent='変更なし';}
+function resetForNewImage(){existingJson=null;lastTags=[];analysisImageFile=null;$('existing').value='';$('existingInfo').textContent='未選択：新規作成モード';$('charName').value='';$('series').value='';$('notes').value='';$('custom').value='';$('confirm').checked=false;$('protect').textContent='';$('editor').textContent='まず画像を解析してください。';$('jpEditor').textContent='解析すると日本語の項目別編集欄が表示されます。';$('tagsOut').textContent='まだ解析していません。';$('export').disabled=true;$('copyjson').disabled=true;$('copy').hidden=true;clearDirty();}
+
+const log=s=>{$('log').textContent+=`\n${s}`;};const resetLog=s=>{$('log').textContent=s;};
+const selected=()=>!!($('model').files[0]&&$('csv').files[0]&&$('img').files[0]);
+function update(){for(const [id,info] of [['model','modelInfo'],['csv','csvInfo'],['img','imgInfo']]){const f=$(id).files[0];$(info).textContent=f?`${f.name} / ${(f.size/1048576).toFixed(1)} MB`:'未選択';} $('run').disabled=!selected();}
+$('model').addEventListener('change',update);$('csv').addEventListener('change',update);
+let previousImage=null;
+$('img').addEventListener('click',e=>{if(analysisBusy){e.preventDefault();return;}if(dirty&&!confirm('未保存の編集があります。画像を変更すると編集内容が失われます。続けますか？'))e.preventDefault();});
+$('img').addEventListener('change',()=>{const f=$('img').files[0];if(f&&f!==previousImage){previousImage=f;resetForNewImage();$('preview').src=URL.createObjectURL(f);$('preview').hidden=false;}update();});
+$('model').addEventListener('change',()=>{cachedSession=null;cachedModelFile=null;});
+window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
+
+function parseCsvLine(line){const fields=[];let current='',quoted=false;for(let i=0;i<line.length;i++){const c=line[i];if(c==='"'){if(quoted&&line[i+1]==='"'){current+='"';i++;}else quoted=!quoted;}else if(c===','&&!quoted){fields.push(current);current='';}else current+=c;}fields.push(current);return fields;}
+async function loadTags(file){const lines=(await file.text()).replace(/^\uFEFF/,'').trim().split(/\r?\n/);const header=parseCsvLine(lines.shift());const nameIndex=header.indexOf('name'),categoryIndex=header.indexOf('category');if(nameIndex<0)throw Error('CSVにname列がありません');return lines.map(line=>{const v=parseCsvLine(line);return {name:v[nameIndex],category:categoryIndex>=0?v[categoryIndex]:''};});}
+function loadScript(url){return new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=url;s.onload=resolve;s.onerror=()=>reject(Error('推論エンジンを取得できません。ネット接続・アプリの通信制限を確認してください。'));document.head.appendChild(s);});}
+async function loadImage(file){return new Promise((resolve,reject)=>{const image=new Image();const url=URL.createObjectURL(file);image.onload=()=>{URL.revokeObjectURL(url);resolve(image);};image.onerror=()=>{URL.revokeObjectURL(url);reject(Error('画像を読み込めません'));};image.src=url;});}
+function makeTensor(image,size,ort){const w=image.naturalWidth,h=image.naturalHeight;const canvas=document.createElement('canvas');canvas.width=size;canvas.height=size;const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.fillStyle='white';ctx.fillRect(0,0,size,size);const scale=size/Math.max(w,h);const dw=w*scale,dh=h*scale;ctx.drawImage(image,(size-dw)/2,(size-dh)/2,dw,dh);const rgba=ctx.getImageData(0,0,size,size).data;const bgr=new Float32Array(size*size*3);for(let i=0,j=0;i<rgba.length;i+=4){bgr[j++]=rgba[i+2];bgr[j++]=rgba[i+1];bgr[j++]=rgba[i];}return new ort.Tensor('float32',bgr,[1,size,size,3]);}
+$('run').addEventListener('click',async()=>{if(!selected()||analysisBusy)return;if(dirty&&!confirm('未保存の編集があります。再解析すると判定が失われる可能性があります。続けますか？'))return;analysisBusy=true;$('run').disabled=true;$('progress').hidden=false;$('progress').removeAttribute('value');$('tagsOut').textContent='解析中…';$('copy').hidden=true;resetLog('解析開始');let session;try{
+log('タグ一覧を読み込み中…');tagRows=await loadTags($('csv').files[0]);log(`タグ数: ${tagRows.length}`);
+log('ONNX Runtime Webを読み込み中…（初回は通信が必要）');const version='1.20.1',base=`https://cdn.jsdelivr.net/npm/onnxruntime-web@${version}/dist/`;if(!window.ort)await loadScript(base+'ort.min.js');ort.env.wasm.wasmPaths=base;ort.env.wasm.numThreads=1;ort.env.wasm.simd=true;
+if(cachedSession&&cachedModelFile===$('model').files[0]){session=cachedSession;log('モデルを再利用しています（再読み込み不要）');}else{log('モデルを読み込み中…（約467MB）');const buffer=await $('model').files[0].arrayBuffer();session=await ort.InferenceSession.create(new Uint8Array(buffer),{executionProviders:['wasm'],graphOptimizationLevel:'all'});cachedSession=session;cachedModelFile=$('model').files[0];log('モデル読み込み成功（次回は再利用）');}
+const inputName=session.inputNames[0],outputName=session.outputNames[0];const inputMeta=session.inputMetadata?.[inputName];let size=448;const dims=inputMeta?.dimensions||inputMeta?.dims;if(Array.isArray(dims)&&Number.isInteger(dims[1])&&dims[1]>0)size=dims[1];log(`入力: ${inputName} / 画像サイズ: ${size} × ${size}`);
+const image=await loadImage($('img').files[0]);const tensor=makeTensor(image,size,ort);log('画像解析を実行中…');const outputs=await session.run({[inputName]:tensor});const values=outputs[outputName].data;log(`出力数: ${values.length}`);if(values.length!==tagRows.length)throw Error(`タグ数とモデル出力数が一致しません（CSV ${tagRows.length}、出力 ${values.length}）。`);
+lastTags=tagRows.map((r,i)=>({...r,score:Number(values[i])})).filter(x=>x.score>=0.35).sort((a,b)=>b.score-a.score);$('tagsOut').textContent=lastTags.length?lastTags.map(x=>`${(x.score*100).toFixed(1)}%  ${translateTag(x.name)}  [${categoryNames[String(x.category)]||'その他'}]`).join('\n'):'35%以上のタグはありませんでした。';$('copy').hidden=!lastTags.length;log('解析完了！');analysisImageFile=$('img').files[0];renderEditor();clearDirty();
+}catch(e){log(`エラー: ${e?.message||String(e)}`);$('tagsOut').textContent='解析できませんでした。上のログを確認してください。';}finally{session=undefined;analysisBusy=false;$('progress').hidden=true;$('run').disabled=!selected();}});
+$('copy').addEventListener('click',async()=>{const value=lastTags.map(x=>x.name).join(', ');try{await navigator.clipboard.writeText(value);log('タグをコピーしました');}catch(e){log('このアプリではコピーが制限されています');}});
+
+const categoryNames={'0':'一般・外見・ポーズ','1':'作者','3':'著作物・作品','4':'キャラクター','5':'メタ情報','9':'レーティング'};
+function renderEditor(){const root=$('editor');root.replaceChildren();const groups=new Map();for(const t of lastTags){const k=String(t.category);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(t);}for(const [cat,tags] of groups){const sec=document.createElement('div');sec.className='taggroup';const h=document.createElement('strong');h.textContent=(categoryNames[cat]||'その他')+' ['+cat+']';sec.appendChild(h);for(const t of tags){const lab=document.createElement('label');lab.className='tagline';const check=document.createElement('input');check.type='checkbox';check.checked=true;check.dataset.tag=t.name;check.dataset.category=cat;const span=document.createElement('span');span.textContent=`${t.name} (${(t.score*100).toFixed(1)}%)`;span.dataset.tagLabel=t.name;lab.append(check,span);sec.appendChild(lab);}root.appendChild(sec);}const best=lastTags.find(t=>String(t.category)==='4');if(best&&!$('charName').value)$('charName').value=best.name.replaceAll('_',' ');$('export').disabled=false;$('copyjson').disabled=false;}
+$('existing').addEventListener('change',async()=>{existingJson=null;const f=$('existing').files[0];if(!f){$('existingInfo').textContent='未選択：新規作成モード';$('protect').textContent='';return;}try{const j=JSON.parse(await f.text());if(!j||typeof j!=='object'||Array.isArray(j))throw Error('JSONの形式が不正です');if($('img').files[0]&&j.image_id!==$('img').files[0].name.replace(/\.[^.]+$/,''))throw Error('画像IDが一致しません。正しい画像のJSONを選択してください');existingJson=j;$('existingInfo').textContent=`読み込み成功：${f.name} / 状態：${j.label_status||'不明'}`;if(j.label_status==='user_confirmed'){$('protect').textContent='保護：確認済みデータは変更せず、AI予測だけを追加します。';$('confirm').checked=false;}else{$('protect').textContent='既存JSONを基に出力します。元ファイルは自動変更されません。';}const c=Array.isArray(j.characters)?j.characters[0]:null;if(c?.name)$('charName').value=c.name;if(c?.series)$('series').value=c.series;if(j.notes)$('notes').value=j.notes;if(lastTags.length)renderEditor();}catch(e){$('existingInfo').textContent='読み込み失敗：'+e.message;$('existing').value='';existingJson=null;}});
+function buildJson(){const file=$('img').files[0];if(!file||!lastTags.length)throw Error('先に画像を解析してください');if(file!==analysisImageFile)throw Error('画像が変更されています。再解析してください');const stem=file.name.replace(/\.[^.]+$/,'');if(existingJson?.image_id&&existingJson.image_id!==stem)throw Error(`画像IDが不一致です：画像 ${stem} / JSON ${existingJson.image_id}`);const picked=[...document.querySelectorAll('#editor input[type=checkbox]:checked')].map(el=>({name:el.dataset.tag,category:Number(el.dataset.category),score:Math.round((lastTags.find(t=>t.name===el.dataset.tag)?.score||0)*10000)/10000}));const custom=$('custom').value.split(',').map(x=>x.trim()).filter(Boolean);const name=$('charName').value.trim();const series=$('series').value.trim();const confirmed=$('confirm').checked;const j=existingJson?structuredClone(existingJson):{schema_version:'1.0',image_id:stem,image_filename:file.name,label_status:'unlabeled',characters:[],background:[],style:[],notes:''};j.ai_prediction={model:'SmilingWolf/wd-swinv2-tagger-v3',source:'local_onnx_wasm',reviewed:confirmed,selected_tags:picked.map(({name,category})=>({name,category})),additional_tags:custom,raw_predictions:lastTags.map(({name,category,score})=>({name,category,score:Math.round(score*10000)/10000}))};if(existingJson?.label_status==='user_confirmed'){j.ai_prediction.reviewed=false;j.ai_prediction.review_note='Existing user_confirmed fields preserved. Proposed edits not applied.';return j;}if(confirmed){j.label_status='user_confirmed';j.characters=name?[{name,series,position:'unknown',hair:[],eyes:[],expression:[],clothing:'',pose:[]}]:[];j.confirmed_tags=[...new Set([...picked.map(x=>x.name),...custom])];j.notes=$('notes').value;}else{j.label_status=existingJson?.label_status||'ai_suggested';}return j;}
+function makeJson(){const j=buildJson();generatedJson=JSON.stringify(j,null,2);$('exportInfo').textContent='JSON生成成功。元のJSONは自動上書きしません。';return {j,text:generatedJson};}
+$('export').addEventListener('click',()=>{try{const {j,text}=makeJson();const blob=new Blob([text],{type:'application/json;charset=utf-8'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`${j.image_id}_教師データ_v10.json`;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),15000);$('exportInfo').textContent='JSONのダウンロードを開始しました。保存完了をファイルアプリで確認してください。';clearDirty();}catch(e){$('exportInfo').textContent='エラー：'+e.message;}});
+$('copyjson').addEventListener('click',async()=>{try{const {text}=makeJson();await navigator.clipboard.writeText(text);$('exportInfo').textContent='JSONをコピーしました。保存先への貼り付けも忘れずに。';}catch(e){$('exportInfo').textContent='コピーできません：'+e.message;}});
+
+// v4: Japanese field editor. The original ONNX inference and v2 export logic are retained.
+const fieldDefs=[
+ ['hair_style','髪型',['long_hair','short_hair','medium_hair','very_long_hair','straight_hair','wavy_hair','curly_hair','twintails','ponytail','braid','straight_bangs','blunt_bangs','hair_between_eyes','ahoge']],
+ ['hair_color','髪色',['blonde_hair','black_hair','brown_hair','pink_hair','blue_hair','white_hair','silver_hair','red_hair','green_hair','purple_hair']],
+ ['eye_color','目の色',['yellow_eyes','blue_eyes','green_eyes','red_eyes','brown_eyes','purple_eyes','pink_eyes','black_eyes']],
+ ['eye_details','目元・視線',['closed_eyes','half_closed_eyes','looking_at_viewer','looking_away']],
+ ['expression','表情・口元',['smile','smiling','grin','laughing','blush','embarrassed','tongue_out','tongue','closed_mouth','open_mouth','frown','crying','tears','angry','surprised',':q']],
+ ['clothing','服装・装飾',['school_uniform','dress','shirt','skirt','jacket','sweater','hat','ribbon','bow','necklace','nude','completely_nude','bare_shoulders']],
+ ['pose','ポーズ・構図',['solo','1girl','2girls','upper_body','full_body','portrait','sitting','standing','lying','arms_up','front_view','from_above','from_below']],
+ ['background','背景・小物',['white_background','simple_background','outdoors','indoors','heart','pink_heart','flower','sky','cloud','bed','room','window']],
+ ['style','画風・仕上げ',['anime_coloring','anime_screencap','illustration','sketch','monochrome','watercolor','pixel_art']]
+];
+const jpNames={long_hair:'ロングヘア',short_hair:'ショートヘア',medium_hair:'ミディアムヘア',very_long_hair:'非常に長い髪',blonde_hair:'金髪',black_hair:'黒髪',brown_hair:'茶髪',pink_hair:'ピンク髪',blue_hair:'青髪',white_hair:'白髪',silver_hair:'銀髪',red_hair:'赤髪',green_hair:'緑髪',purple_hair:'紫髪',straight_hair:'ストレートヘア',wavy_hair:'ウェーブヘア',curly_hair:'巻き髪',twintails:'ツインテール',ponytail:'ポニーテール',braid:'三つ編み',straight_bangs:'まっすぐな前髪',blunt_bangs:'ぱっつん前髪',hair_between_eyes:'目の間に髪',ahoge:'アホ毛',yellow_eyes:'黄色い目',blue_eyes:'青い目',green_eyes:'緑の目',red_eyes:'赤い目',brown_eyes:'茶色い目',purple_eyes:'紫の目',pink_eyes:'ピンクの目',black_eyes:'黒い目',closed_eyes:'閉じた目',half_closed_eyes:'半目',looking_at_viewer:'こちらを見る',looking_away:'視線を外す',smile:'笑顔',smiling:'微笑み',grin:'にっこり',laughing:'笑う',blush:'赤面',embarrassed:'照れ',tongue_out:'舌を出す',tongue:'舌が見える',closed_mouth:'口を閉じる',open_mouth:'口を開ける',frown:'しかめ面',crying:'泣く',tears:'涙',angry:'怒り',surprised:'驚き',':q':'舌を少し出した表情',school_uniform:'制服',dress:'ドレス',shirt:'シャツ',skirt:'スカート',jacket:'ジャケット',sweater:'セーター',hat:'帽子',ribbon:'リボン',bow:'蝶結び',necklace:'ネックレス',nude:'衣服なし',completely_nude:'全裸',bare_shoulders:'肩が露出',solo:'単独', '1girl':'女性1人','2girls':'女性2人',upper_body:'上半身',full_body:'全身',portrait:'ポートレート',sitting:'座る',standing:'立つ',lying:'横になる',arms_up:'腕を上げる',front_view:'正面',from_above:'俯瞰',from_below:'あおり',white_background:'白い背景',simple_background:'シンプルな背景',outdoors:'屋外',indoors:'室内',heart:'ハート',pink_heart:'ピンクのハート',flower:'花',sky:'空',cloud:'雲',bed:'ベッド',room:'部屋',window:'窓',anime_coloring:'アニメ塗り',anime_screencap:'アニメの場面',illustration:'イラスト',sketch:'スケッチ',monochrome:'モノクロ',watercolor:'水彩',pixel_art:'ドット絵'};
+let jpTouched=false;
+function guessFields(){const r={};for(const [key,,tags] of fieldDefs){r[key]=lastTags.filter(x=>tags.includes(x.name)&&String(x.category)==='0').map(x=>x.name);}return r;}
+function getFieldValues(){const r={};for(const [key] of fieldDefs){const el=$('jp_'+key);r[key]=el?el.value.split(/[,、\n]/).map(v=>v.trim()).filter(Boolean):[];}return r;}
+function uniqueValues(values){return [...new Set(values.filter(Boolean))];}
+function existingValues(key){if(!existingJson||existingJson.label_status!=='user_confirmed')return null;const c=Array.isArray(existingJson.characters)?existingJson.characters[0]:null;
+  if(key==='background'||key==='style')return Array.isArray(existingJson[key])?existingJson[key]:[];
+  if(!c)return [];
+  if(key==='hair_style')return (c.hair||[]).filter(x=>!/(blonde|black|brown|pink|blue|white|silver|red|green|purple|金髪|黒髪|茶髪|ピンク髪|青髪|白髪|銀髪|赤髪|緑髪|紫髪)/i.test(x));
+  if(key==='hair_color')return (c.hair||[]).filter(x=>/(blonde|black|brown|pink|blue|white|silver|red|green|purple|金髪|黒髪|茶髪|ピンク髪|青髪|白髪|銀髪|赤髪|緑髪|紫髪)/i.test(x));
+  if(key==='eye_color')return (c.eyes||[]).filter(x=>!/(looking|closed|視線|目元)/i.test(x));
+  if(key==='eye_details')return (c.eyes||[]).filter(x=>/(looking|closed|視線|目元)/i.test(x));
+  const old=c[key];return Array.isArray(old)?old:typeof old==='string'&&old?[old]:[];
+}
+const equivalentTags={tongue:['tongue_out',':q'],tongue_out:[':q'],smiling:['smile'],grin:['smile'],completely_nude:['nude']};
+function compactSuggestions(tags){const set=new Set(tags);return tags.filter(t=>!((equivalentTags[t]||[]).some(other=>set.has(other))));}
+function renderJapanese(){const root=$('jpEditor');root.replaceChildren();if(!lastTags.length)return;const suggestions=guessFields();const protectedData=existingJson?.label_status==='user_confirmed';
+const intro=document.createElement('p');intro.className='edit-note';intro.textContent=protectedData?'確認済みの値を表示中。AI候補は参考情報です。編集した値は別の提案欄に保存し、元の正解ラベルを変更しません。':'AI候補を日本語で表示中。内容を確認・修正してください。';root.appendChild(intro);
+const im=$('preview');if(im.src){const preview=document.createElement('img');preview.className='mini-preview';preview.alt='確認用画像';preview.src=im.src;root.appendChild(preview);}
+for(const [key,label] of fieldDefs){const group=document.createElement('div');group.className='jpitem';const title=document.createElement('label');title.htmlFor='jp_'+key;title.textContent=label;const inp=document.createElement('textarea');inp.className='field';inp.id='jp_'+key;inp.rows=2;inp.placeholder='カンマ区切りで編集';const aiTags=compactSuggestions(suggestions[key]);const aiValues=uniqueValues(aiTags.map(x=>jpNames[x]||x));const confirmedValues=existingValues(key);inp.value=(confirmedValues===null?aiValues:confirmedValues).join('、');inp.addEventListener('input',()=>{jpTouched=true;markDirty();});const hint=document.createElement('div');hint.className='hint';hint.textContent='AI候補: '+(aiTags.length?aiTags.map(x=>`${jpNames[x]||x} ${Math.round((lastTags.find(t=>t.name===x)?.score||0)*100)}%`).join(' / '):'該当なし（手動入力可）');group.append(title,inp,hint);root.appendChild(group);}}
+const originalRenderEditor=renderEditor;
+renderEditor=function(){originalRenderEditor();renderJapanese();};
+// Existing JSON refresh occurs after its async file read completes, inside the main change handler.
+const originalBuildJson=buildJson;
+buildJson=function(){const j=originalBuildJson();const fields=getFieldValues();if(!lastTags.length)return j;
+const protectedData=existingJson?.label_status==='user_confirmed';
+j.ai_prediction.structured_suggestions={...fields,character_name:$('charName').value.trim(),series:$('series').value.trim()};
+j.ai_prediction.structured_suggestions_source='Japanese editing screen; review required';
+if(protectedData){j.ai_prediction.reviewed=false;j.ai_prediction.review_note='Original user-confirmed labels preserved. Japanese field edits stored as suggestions only.';return j;}
+if($('confirm').checked){const c=j.characters?.[0]||{name:$('charName').value.trim(),series:$('series').value.trim(),position:'unknown'};c.hair=[...fields.hair_style,...fields.hair_color];c.eyes=[...fields.eye_color,...fields.eye_details];c.expression=fields.expression;c.clothing=fields.clothing.join('、');c.pose=fields.pose;j.characters=[c];j.background=fields.background;j.style=fields.style;j.ai_prediction.reviewed=true;}
+return j;};
+
+document.querySelectorAll('#charName,#series,#notes,#custom,#confirm').forEach(el=>el.addEventListener('input',markDirty));
+// v5: explicit tri-state review of AI tags; unreviewed predictions are never ground truth.
+const v4RenderEditor=renderEditor;
+renderEditor=function(){
+  v4RenderEditor();
+  const root=$('editor');
+  const info=document.createElement('p');info.className='review-help';
+  info.textContent='初期状態はすべて「未確認」です。正しいものだけ「正しい」、誤りは「間違い」に変更してください。';
+  root.prepend(info);
+  for(const check of root.querySelectorAll('input[type=checkbox][data-tag]')){
+    const lab=check.closest('label');
+    const sel=document.createElement('select');sel.className='review-state';
+    sel.dataset.tag=check.dataset.tag;sel.dataset.category=check.dataset.category;const label=lab.querySelector('.taglabel')||lab.querySelector('span');if(label){label.textContent=`${translateTag(check.dataset.tag)} (${(lastTags.find(t=>t.name===check.dataset.tag)?.score*100||0).toFixed(1)}%)`;label.title=check.dataset.tag;}
+    for(const [value,label] of [['pending','未確認'],['accepted','正しい'],['rejected','間違い']]){
+      const opt=document.createElement('option');opt.value=value;opt.textContent=label;sel.appendChild(opt);
+    }
+    check.checked=false;check.hidden=true;
+    lab.appendChild(sel);
+  }
+  restoreReviewStates();
+  updateReviewSummary();
+   // Delegated handler is installed once, not every time the editor is redrawn.
+  if(!root.dataset.reviewListener){
+     root.addEventListener('change',e=>{if(e.target.matches('.review-state')){updateReviewSummary();markDirty();}});
+     root.dataset.reviewListener='1';
+   }
+};
+ // Restore decisions only for tags belonging to the current inference result.
+ // Match both tag name and category to avoid accidental collisions.
+ function restoreReviewStates(){
+   const ai=existingJson?.ai_prediction;
+   if(!ai)return;
+   const states=new Map();
+   const key=(name,category)=>String(category)+'\u0000'+String(name);
+   if(Array.isArray(ai.review_states)){
+     for(const item of ai.review_states){
+       if(item&&['pending','accepted','rejected'].includes(item.status))
+         states.set(key(item.name,item.category),item.status);
+     }
+   }else if(ai.tag_review){
+     // Compatibility with JSON containing only the three tag lists.
+     const categories=new Map(lastTags.map(t=>[t.name,t.category]));
+     for(const [group,status] of [['accepted','accepted'],['rejected','rejected'],['pending','pending']]){
+       for(const name of (Array.isArray(ai.tag_review[group])?ai.tag_review[group]:[])){
+         if(categories.has(name))states.set(key(name,categories.get(name)),status);
+       }
+     }
+   }
+   for(const el of document.querySelectorAll('#editor .review-state')){
+     el.value=states.get(key(el.dataset.tag,el.dataset.category))||'pending';
+   }
+ }
+function updateReviewSummary(){
+  let summary=$('reviewSummary');
+  if(!summary){summary=document.createElement('div');summary.id='reviewSummary';summary.className='review-summary';$('editor').prepend(summary);}
+  const states=[...document.querySelectorAll('#editor .review-state')].map(x=>x.value);
+  summary.textContent=`判定：正しい ${states.filter(x=>x==='accepted').length}件 / 間違い ${states.filter(x=>x==='rejected').length}件 / 未確認 ${states.filter(x=>x==='pending').length}件`;
+}
+const v4BuildJson=buildJson;
+buildJson=function(){
+  const j=v4BuildJson();
+  const states=[...document.querySelectorAll('#editor .review-state')].map(el=>({name:el.dataset.tag,category:Number(el.dataset.category),status:el.value,score:Math.round((lastTags.find(t=>t.name===el.dataset.tag)?.score||0)*10000)/10000}));
+  const accepted=states.filter(x=>x.status==='accepted').map(x=>x.name);
+  const rejected=states.filter(x=>x.status==='rejected').map(x=>x.name);
+  const pending=states.filter(x=>x.status==='pending').map(x=>x.name);
+  const protectedData=existingJson?.label_status==='user_confirmed';
+  j.ai_prediction.tag_review={accepted,rejected,pending};
+  j.ai_prediction.review_states=states;
+  j.ai_prediction.reviewed=Boolean($('confirm').checked&&!protectedData);
+  if(protectedData){
+    // Never mutate previously confirmed labels; keep reviewed proposals separate.
+    j.ai_prediction.reviewed=false;
+    j.ai_prediction.review_note='Existing user-confirmed labels preserved. Tag decisions and edited fields are proposals only.';
+  }else if($('confirm').checked){
+    const custom=$('custom').value.split(',').map(x=>x.trim()).filter(Boolean);
+    j.confirmed_tags=[...new Set([...accepted,...custom])];
+    j.rejected_tags=rejected;
+    j.label_status='user_confirmed';
+  }else{
+    // A provisional export cannot turn predictions into ground-truth tags.
+    delete j.confirmed_tags;
+    delete j.rejected_tags;
+  }
+  return j;
+};
+
+// v8: Presentation-only translation. Machine-readable tag names remain unchanged.
+const v8Translations={breasts:'胸',nipples:'乳首',large_breasts:'大きな胸',collarbone:'鎖骨',sweat:'汗',breasts_squeezed_together:'胸を寄せる',tsurumaki_kokoro:'鶴巻こころ',hanasakigawa_school_uniform:'花咲川女子学園の制服',censored:'修正あり',mosaic_censoring:'モザイク修正',hetero:'男女',penis:'男性器', '1boy':'男性1人',questionable:'成人向け判定（要確認）',sweatdrop:'汗のしずく',long_sleeves:'長袖',short_sleeves:'半袖',open_clothes:'服が開いている',hair_ornament:'髪飾り',hairclip:'ヘアピン',hair_ribbon:'髪のリボン',bangs:'前髪',eyebrows_visible_through_hair:'髪越しに見える眉',open_eyes:'目を開ける',parted_lips:'唇が開いている',saliva:'唾液',looking_down:'下を見る',looking_up:'上を見る',simple_background:'シンプルな背景',white_background:'白い背景',blue_background:'青い背景',pink_background:'ピンクの背景',brown_hair:'茶髪',blonde_hair:'金髪',yellow_eyes:'黄色い目',solo:'単独'};
+const v14Translations={"oral":"口を使った性的行為","pov":"主観視点","clothed_female_nude_male":"着衣の女性と裸の男性","fellatio":"フェラチオ","squatting":"しゃがむ姿勢","medium_breasts":"中くらいの胸","solo_focus":"1人を中心に描く構図","erection":"勃起","licking_penis":"男性器を舐める","gradient_background":"グラデーション背景","sailor_collar":"セーラー襟","upper_teeth_only":"上の歯だけ見える","teeth":"歯","black_socks":"黒い靴下","explicit":"露骨な成人向け表現","open_mouth":"口を開ける","tongue":"舌","tongue_out":"舌を出す","looking_at_viewer":"こちらを見る","blush":"赤面","closed_mouth":"口を閉じる","smile":"笑顔","nude":"衣服なし","completely_nude":"全裸","upper_body":"上半身","heart":"ハート","pink_hearts":"ピンクのハート","straight_bangs":"ぱっつん前髪","1girl":"女性1人","2girls":"女性2人","3girls":"女性3人","multiple_girls":"女性複数","1boy":"男性1人","2boys":"男性2人","multiple_boys":"男性複数","1other":"その他の人物1人","solo":"単独","couple":"カップル","group":"集団","male_focus":"男性中心","female_focus":"女性中心","portrait":"肖像構図","full_body":"全身","cowboy_shot":"太ももまでの構図","close-up":"クローズアップ","face":"顔","head":"頭","from_above":"上からの視点","from_below":"下からの視点","from_side":"横からの視点","from_behind":"後ろからの視点","looking_back":"振り返る","looking_away":"視線をそらす","looking_to_the_side":"横を見る","eye_contact":"視線が合う","facing_viewer":"正面を向く","profile":"横顔","dutch_angle":"斜めの構図","long_hair":"ロングヘア","short_hair":"ショートヘア","medium_hair":"ミディアムヘア","very_long_hair":"非常に長い髪","hair_over_one_eye":"片目にかかる髪","hair_between_eyes":"目の間にかかる髪","hair_over_eyes":"目を覆う髪","hair_intakes":"髪のハネ","ahoge":"アホ毛","ponytail":"ポニーテール","twintails":"ツインテール","braid":"三つ編み","single_braid":"一本の三つ編み","side_ponytail":"サイドポニーテール","bob_cut":"ボブカット","hime_cut":"姫カット","wavy_hair":"ウェーブヘア","curly_hair":"巻き髪","straight_hair":"ストレートヘア","messy_hair":"乱れた髪","hair_bun":"お団子ヘア","hairband":"ヘアバンド","hair_flower":"髪の花飾り","hair_bow":"髪のリボン飾り","black_hair":"黒髪","white_hair":"白髪","silver_hair":"銀髪","grey_hair":"灰色の髪","gray_hair":"灰色の髪","pink_hair":"ピンク髪","purple_hair":"紫髪","blue_hair":"青髪","green_hair":"緑髪","red_hair":"赤髪","orange_hair":"オレンジ髪","multicolored_hair":"多色の髪","two-tone_hair":"ツートンカラーの髪","blue_eyes":"青い目","red_eyes":"赤い目","green_eyes":"緑の目","purple_eyes":"紫の目","pink_eyes":"ピンクの目","brown_eyes":"茶色い目","black_eyes":"黒い目","grey_eyes":"灰色の目","gray_eyes":"灰色の目","heterochromia":"オッドアイ","closed_eyes":"目を閉じる","one_eye_closed":"片目を閉じる","wink":"ウインク","half-closed_eyes":"半目","tears":"涙","crying":"泣く","happy":"嬉しそう","embarrassed":"恥ずかしそう","surprised":"驚いた表情","angry":"怒った表情","sad":"悲しい表情","expressionless":"無表情","grin":"にっこり笑う","open_lips":"唇を開く","parted_lips":"唇が少し開く","fang":"八重歯","fangs":"八重歯","upper_teeth":"上の歯","lower_teeth":"下の歯","drooling":"よだれ","saliva":"唾液","sweat":"汗","sweatdrop":"汗のしずく","sitting":"座る","standing":"立つ","lying":"横になる","lying_on_back":"仰向け","lying_on_stomach":"うつ伏せ","kneeling":"ひざまずく","all_fours":"四つんばい","on_bed":"ベッドの上","on_floor":"床の上","leaning_forward":"前かがみ","arms_up":"両腕を上げる","arm_up":"片腕を上げる","arms_behind_back":"背中に手を回す","hand_on_hip":"腰に手を当てる","hands_on_hips":"両手を腰に当てる","hand_on_own_face":"自分の顔に手を当てる","hand_to_mouth":"口元に手を当てる","spread_legs":"脚を開く","crossed_legs":"脚を組む","legs_together":"脚を揃える","barefoot":"裸足","feet":"足","hands":"手","looking_up":"上を見る","looking_down":"下を見る","school_uniform":"学校制服","serafuku":"セーラー服","sailor_uniform":"セーラー服","collared_shirt":"襟付きシャツ","shirt":"シャツ","white_shirt":"白いシャツ","blouse":"ブラウス","skirt":"スカート","pleated_skirt":"プリーツスカート","miniskirt":"ミニスカート","dress":"ワンピース","sundress":"サンドレス","jacket":"ジャケット","cardigan":"カーディガン","sweater":"セーター","hoodie":"パーカー","t-shirt":"Tシャツ","shorts":"ショートパンツ","pants":"ズボン","jeans":"ジーンズ","black_legwear":"黒い脚衣","thighhighs":"ニーハイソックス","kneehighs":"ハイソックス","socks":"靴下","white_socks":"白い靴下","pantyhose":"パンティーストッキング","shoes":"靴","loafers":"ローファー","boots":"ブーツ","ribbon":"リボン","necktie":"ネクタイ","bowtie":"蝶ネクタイ","gloves":"手袋","hat":"帽子","glasses":"眼鏡","earrings":"イヤリング","necklace":"ネックレス","bracelet":"ブレスレット","bare_shoulders":"肩出し","off_shoulder":"オフショルダー","cleavage":"胸の谷間","underwear":"下着","bra":"ブラジャー","panties":"パンティー","bikini":"ビキニ","swimsuit":"水着","one-piece_swimsuit":"ワンピース水着","naked_shirt":"シャツだけを着ている","partially_undressed":"一部脱衣","clothes_lift":"服を持ち上げる","clothes_pull":"服を引っ張る","bed":"ベッド","pillow":"枕","bedroom":"寝室","indoors":"屋内","outdoors":"屋外","room":"部屋","classroom":"教室","window":"窓","curtains":"カーテン","wall":"壁","floor":"床","sky":"空","cloud":"雲","clouds":"雲","night":"夜","day":"昼","sunlight":"日光","sunset":"夕焼け","stars":"星","flower":"花","flowers":"花","tree":"木","trees":"木々","grass":"草","water":"水","beach":"浜辺","ocean":"海","city":"街","street":"通り","park":"公園","dark_background":"暗い背景","black_background":"黒い背景","grey_background":"灰色の背景","red_background":"赤い背景","purple_background":"紫の背景","yellow_background":"黄色い背景","green_background":"緑の背景","transparent_background":"透明背景","blurry_background":"ぼかした背景","abstract_background":"抽象的な背景","patterned_background":"模様入り背景","sparkles":"きらめき","shiny":"光沢","light_particles":"光の粒","shadow":"影","shading":"陰影","depth_of_field":"被写界深度","bokeh":"玉ボケ","monochrome":"モノクロ","greyscale":"グレースケール","grayscale":"グレースケール","comic":"漫画風","sketch":"スケッチ","lineart":"線画","watercolor":"水彩風","traditional_media":"アナログ画材風","digital_art":"デジタルイラスト","simple_background":"シンプルな背景","censored":"修正あり","mosaic_censoring":"モザイク修正","bar_censor":"帯状の修正","convenient_censoring":"物による隠蔽","uncensored":"無修正","questionable":"成人向け判定（要確認）","sensitive":"センシティブ判定","safe":"一般向け判定","general":"一般向け判定","nsfw":"成人向け","hetero":"男女","yuri":"女性同士の恋愛表現","yaoi":"男性同士の恋愛表現","kiss":"キス","kissing":"キスをする","hug":"抱擁","hugging":"抱きしめる","topless":"上半身裸","bottomless":"下半身裸","breasts":"胸","small_breasts":"小さな胸","large_breasts":"大きな胸","huge_breasts":"非常に大きな胸","nipples":"乳首","navel":"へそ","stomach":"お腹","midriff":"腹部","thighs":"太もも","ass":"尻","buttocks":"尻","penis":"男性器","testicles":"睾丸","vagina":"女性器","pubic_hair":"陰毛","cum":"精液","sex":"性行為","masturbation":"自慰行為","handjob":"手を使った性的行為","paizuri":"胸を使った性的行為","deepthroat":"深い口腔性交"};
+function translateTag(tag){return v14Translations[tag]||jpNames[tag]||v8Translations[tag]||tag;}
+// Keep the selector on the right even when the Japanese label is long.
+const v8Style=document.createElement('style');v8Style.textContent=`.tagline{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;flex-wrap:nowrap!important;gap:10px}.tagline .taglabel,.tagline span{min-width:0!important;overflow-wrap:anywhere}.tagline select{flex-shrink:0;max-width:115px}.bulk-actions{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.bulk-actions button{padding:8px 10px;font-size:14px}.bulk-actions .secondary{background:#526579}.tagline input[type=checkbox][hidden]{display:none}`;document.head.appendChild(v8Style);
+const v8RenderEditor=renderEditor;
+renderEditor=function(){v8RenderEditor();const root=$('editor');for(const section of root.querySelectorAll('.taggroup')){const h=section.querySelector('strong');const bulk=document.createElement('div');bulk.className='bulk-actions';for(const [status,label] of [['accepted','全て正しい'],['rejected','全て間違い'],['pending','全て未確認']]){const b=document.createElement('button');b.type='button';b.className='secondary';b.textContent=label;b.addEventListener('click',()=>{for(const select of section.querySelectorAll('.review-state'))select.value=status;updateReviewSummary();markDirty();});bulk.appendChild(b);}h.after(bulk);}};
+
+// v9: explicit separation of machine predictions, review decisions and approved training labels.
+// Do not silently convert structured AI suggestions to ground truth.
+const v8BuildJsonFinal=buildJson;
+buildJson=function(){
+  const j=v8BuildJsonFinal();
+  const states=[...document.querySelectorAll('#editor .review-state')].map(el=>({
+    name:el.dataset.tag,category:Number(el.dataset.category),status:el.value,
+    score:Math.round((lastTags.find(t=>t.name===el.dataset.tag)?.score||0)*10000)/10000
+  }));
+  const accepted=states.filter(x=>x.status==='accepted').map(x=>x.name);
+  const rejected=states.filter(x=>x.status==='rejected').map(x=>x.name);
+  const pending=states.filter(x=>x.status==='pending').map(x=>x.name);
+  const custom=$('custom').value.split(',').map(x=>x.trim()).filter(Boolean);
+  const approved=$('confirm').checked;
+  const protectedLegacy=existingJson?.label_status==='user_confirmed';
+  const suggestions={...(j.ai_prediction.structured_suggestions||{}),
+    character_name:$('charName').value.trim(),series:$('series').value.trim()};
+  j.schema_version='1.1';
+  j.ai_prediction.review_states=states;
+  j.ai_prediction.tag_review={accepted,rejected,pending};
+  j.ai_prediction.reviewed=pending.length===0&&states.length>0;
+  j.ai_prediction.structured_suggestions=suggestions;
+  j.ai_prediction.structured_suggestions_source='AI-derived and manually editable proposals; not training ground truth';
+  j.review={
+    status:pending.length===0?'complete':(accepted.length||rejected.length?'partial':'not_started'),
+    approved_for_training:approved,
+    accepted_tags:accepted,
+    rejected_tags:rejected,
+    pending_tags:pending,
+    manual_additions:custom,
+    note:'A prediction score is not a human confirmation. Pending tags are excluded from training.'
+  };
+  // Ground truth is derived exclusively from explicit per-tag review, never from field suggestions.
+  j.training_labels={
+    status:approved?(pending.length?'partially_reviewed':'reviewed'):'not_approved',
+    source:'human_tag_review',
+    accepted_tags:approved?[...new Set([...accepted,...custom])]:[],
+    rejected_tags:approved?rejected:[],
+    pending_count:pending.length,
+    structured_fields_status:'unverified_suggestions'
+  };
+  // The old confirmed_tags is not reliable for migrated v6-v8 files; do not modify it
+  // when an existing confirmed record is protected.
+  if(protectedLegacy){
+    j.label_status=existingJson.label_status;
+    j.characters=structuredClone(existingJson.characters||[]);
+    j.background=structuredClone(existingJson.background||[]);
+    j.style=structuredClone(existingJson.style||[]);
+    j.notes=existingJson.notes||'';
+    if('confirmed_tags' in existingJson)j.confirmed_tags=structuredClone(existingJson.confirmed_tags);
+    if('rejected_tags' in existingJson)j.rejected_tags=structuredClone(existingJson.rejected_tags);
+    j.training_labels.legacy_fields_protected=true;
+  }else{
+    if(approved){
+      j.confirmed_tags=[...new Set([...accepted,...custom])];
+      j.rejected_tags=[...rejected];
+      j.label_status='user_confirmed';
+    }else{
+      delete j.confirmed_tags;
+      delete j.rejected_tags;
+      j.label_status='ai_suggested';
+    }
+    // Structured fields are suggestions, even when the tag review is approved.
+    j.characters=[];j.background=[];j.style=[];
+  }
+  return j;
+};
+const v8MakeJsonFinal=makeJson;
+// Existing download/export handlers call makeJson dynamically and receive v9 format.
+const v9Help=document.createElement('p');
+v9Help.className='review-help';
+v9Help.textContent='v9：AI候補・タグごとの正誤・学習用確定タグをJSON内で分離します。未確認タグと自動入力された外見項目は学習用確定タグに入りません。旧JSONの確定欄は保護します。';
+$('existingInfo').before(v9Help);
+
+// v10: partial training approval is a distinct, explicit user action.
+const approveBox=document.createElement('label');
+approveBox.style.cssText='padding:12px;border:1px solid #c7d2e2;border-radius:10px;background:#f3f7ff;margin:10px 0;';
+approveBox.innerHTML='<input type="checkbox" id="trainingApprove"> 判定済みタグだけを学習用に承認する（未確認タグは除外）';
+const approveHelp=document.createElement('p');
+approveHelp.className='review-help';
+approveHelp.textContent='「編集内容を確認済みとして保存」とは別の承認です。正しい・間違いの判定を1件以上付けた場合のみ使用できます。未確認タグは学習用ラベルに含めません。';
+approveBox.appendChild(approveHelp);
+$('confirm').closest('label').after(approveBox);
+const priorResetForNewImage=resetForNewImage;
+resetForNewImage=function(){priorResetForNewImage();$('trainingApprove').checked=false;};
+const v9BuildJsonFinal=buildJson;
+buildJson=function(){
+  const j=v9BuildJsonFinal();
+  const approval=$('trainingApprove').checked;
+  const reviewed=j.ai_prediction.review_states||[];
+  const accepted=reviewed.filter(x=>x.status==='accepted').map(x=>x.name);
+  const rejected=reviewed.filter(x=>x.status==='rejected').map(x=>x.name);
+  const pending=reviewed.filter(x=>x.status==='pending');
+  if(approval&&!$('confirm').checked)throw Error('学習用に承認する前に「編集内容を確認済みとして保存」をチェックしてください。');
+  if(approval&&accepted.length+rejected.length===0)throw Error('少なくとも1件のタグを正しい・間違いに判定してください。');
+  const custom=($('custom').value||'').split(',').map(x=>x.trim()).filter(Boolean);
+  // Manual additions are not part of the verified prediction review; never approve automatically.
+  const approvedAccepted=approval?[...new Set(accepted)]:[];
+  const approvedRejected=approval?[...new Set(rejected)]:[];
+  j.schema_version='1.2';
+  j.review.approved_for_training=approval;
+  j.review.approval_scope=approval?'reviewed_tags_only':'none';
+  j.review.note='Only explicitly accepted/rejected prediction tags are eligible for training. Pending tags and unreviewed manual additions are excluded.';
+  j.training_labels={
+    status:approval?(pending.length?'partially_approved':'approved'):'not_approved',
+    source:'human_tag_review',
+    accepted_tags:approvedAccepted,
+    rejected_tags:approvedRejected,
+    pending_count:pending.length,
+    structured_fields_status:'unverified_suggestions',
+    manual_additions_status:custom.length?'not_approved':'none',
+    approval_scope:approval?'reviewed_tags_only':'none'
+  };
+  if(existingJson?.label_status==='user_confirmed')j.training_labels.legacy_fields_protected=true;
+  // The old top-level confirmed_tags are kept for compatibility, but only training_labels
+  // expresses explicit training authorization.
+  return j;
+};
+const oldExistingChangeHandler=()=>{$('trainingApprove').checked=false;};
+$('existing').addEventListener('change',oldExistingChangeHandler);
+$('trainingApprove').addEventListener('change',markDirty);
+$('confirm').addEventListener('change',()=>{if(!$('confirm').checked)$('trainingApprove').checked=false;});
+const v10Help=document.createElement('p');v10Help.className='review-help';
+v10Help.textContent='v11：複数JSONの進捗管理に対応。学習用に承認しても未確認タグは除外されます。';
+approveBox.after(v10Help);
+
+// v11: standalone local batch JSON index. No model inference or file modification.
+const v11Panel=document.createElement('section');
+v11Panel.id='batchPanel';
+v11Panel.innerHTML=`<h2>⑤ 教師データ管理（複数JSON）</h2>
+<p class="muted">複数の教師データJSONをまとめて選択し、確認・学習承認の進捗を一覧表示します。ファイルは端末内で読み取り、外部送信しません。元のJSONは変更しません。</p>
+<label for="batchFiles">教師データJSONをまとめて選択</label>
+<input id="batchFiles" type="file" accept=".json,application/json" multiple>
+<div class="actions"><button id="batchRead" type="button">一覧を更新</button><button id="batchCsv" type="button" class="secondary" disabled>一覧CSVを保存</button><button id="batchJson" type="button" class="secondary" disabled>一覧JSONを保存</button></div>
+<p id="batchMessage" class="muted">まだファイルを読み込んでいません。</p>
+<div id="batchStats"></div><div id="batchTable" style="overflow-x:auto"></div>`;
+document.querySelector('main')?.appendChild(v11Panel) || document.body.insertBefore(v11Panel,document.querySelector('script'));
+const v11Css=document.createElement('style');v11Css.textContent=`#batchPanel{margin:20px auto;padding:20px;max-width:900px;background:white;border:1px solid #d8e1ee;border-radius:18px}#batchPanel input[type=file]{display:block;margin:12px 0;max-width:100%}#batchPanel .actions{flex-wrap:wrap}#batchPanel table{border-collapse:collapse;width:100%;font-size:14px;min-width:590px}#batchPanel th,#batchPanel td{padding:10px;border-bottom:1px solid #e0e6ed;text-align:left;white-space:nowrap}#batchPanel th{background:#eaf0f7}#batchPanel .v11warn{color:#ad452c}#batchPanel .v11summary{font-weight:bold;padding:12px;background:#eef3fa;border-radius:10px;margin:12px 0}`;document.head.appendChild(v11Css);
+let v11Rows=[];
+function v11Unique(v){return [...new Set(Array.isArray(v)?v.filter(x=>typeof x==='string'):[])];}
+function v11Analyze(obj,file){
+ if(!obj||typeof obj!=='object'||Array.isArray(obj)||typeof obj.image_id!=='string'||!obj.image_id.trim())throw Error('image_idがありません');
+ const ai=obj.ai_prediction||{};
+ const states=Array.isArray(ai.review_states)?ai.review_states:[];
+ const review=obj.review||{};
+ const legacy=ai.tag_review||{};
+ let a=[],r=[],u=[];
+ if(states.length){for(const x of states){if(!x||typeof x.name!=='string')continue;if(x.status==='accepted')a.push(x.name);else if(x.status==='rejected')r.push(x.name);else u.push(x.name);}}
+ else{a=review.accepted_tags||legacy.accepted||obj.confirmed_tags||[];r=review.rejected_tags||legacy.rejected||obj.rejected_tags||[];u=review.pending_tags||legacy.pending||[];}
+ a=v11Unique(a);r=v11Unique(r);u=v11Unique(u).filter(x=>!a.includes(x)&&!r.includes(x));
+ const training=obj.training_labels||{};
+ const approved=training.status==='partially_approved'||training.status==='approved'||review.approved_for_training===true;
+ const ta=v11Unique(training.accepted_tags),tr=v11Unique(training.rejected_tags);
+ const issues=[];
+ if(a.some(x=>r.includes(x)))issues.push('正誤の重複');
+ if(approved&&(!ta.every(x=>a.includes(x))||!tr.every(x=>r.includes(x))))issues.push('承認タグの不整合');
+ if(approved&&!ta.length&&!tr.length)issues.push('承認済みだが対象0件');
+ if(!states.length&&!Array.isArray(review.accepted_tags)&&!Array.isArray(legacy.accepted))issues.push('判定情報が不足');
+ return {id:obj.image_id,file:file.name,schema:obj.schema_version||'不明',accepted:a.length,rejected:r.length,pending:u.length,approved,trainingPositive:ta.length,trainingNegative:tr.length,issues};
+}
+function v11Cell(tr,s){const td=document.createElement('td');td.textContent=String(s);tr.appendChild(td);}
+function v11Render(){const stats=document.getElementById('batchStats'),out=document.getElementById('batchTable');stats.replaceChildren();out.replaceChildren();if(!v11Rows.length)return;
+ const approved=v11Rows.filter(r=>r.approved).length,partial=v11Rows.filter(r=>r.pending>0).length;
+ const sum=document.createElement('div');sum.className='v11summary';sum.textContent=`画像 ${v11Rows.length}件 / 学習承認済み ${approved}件 / 未確認タグあり ${partial}件 / 学習用正例 ${v11Rows.reduce((n,r)=>n+r.trainingPositive,0)}件 / 負例 ${v11Rows.reduce((n,r)=>n+r.trainingNegative,0)}件`;stats.appendChild(sum);
+ const table=document.createElement('table'),head=document.createElement('tr');for(const h of ['画像ID','判定:正','判定:誤','未確認','学習承認','学習:正/負','注意']){const th=document.createElement('th');th.textContent=h;head.appendChild(th);}table.appendChild(head);
+ for(const r of v11Rows){const tr=document.createElement('tr');for(const val of [r.id,r.accepted,r.rejected,r.pending,r.approved?'承認済み':'未承認',`${r.trainingPositive}/${r.trainingNegative}`,r.issues.join('、')||'—'])v11Cell(tr,val);table.appendChild(tr);}out.appendChild(table);
+}
+document.getElementById('batchRead').addEventListener('click',async()=>{
+ const files=[...document.getElementById('batchFiles').files];const message=document.getElementById('batchMessage');if(!files.length){message.textContent='JSONを選択してください。';return;}
+ const rows=[],errors=[];for(const file of files){try{const obj=JSON.parse(await file.text());rows.push(v11Analyze(obj,file));}catch(e){errors.push(`${file.name}: ${e.message}`);}}
+ const byId=new Map();for(const row of rows){if(byId.has(row.id)){row.issues.push('画像ID重複');byId.get(row.id).issues.push('画像ID重複');}else byId.set(row.id,row);}
+ v11Rows=rows.sort((a,b)=>a.id.localeCompare(b.id,undefined,{numeric:true}));v11Render();message.textContent=`読み込み ${rows.length}件 / エラー ${errors.length}件`+(errors.length?' — '+errors.slice(0,4).join(' / '):'');
+ document.getElementById('batchCsv').disabled=!rows.length;document.getElementById('batchJson').disabled=!rows.length;
+});
+function v11Download(filename,content,mime){const blob=new Blob([content],{type:mime});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),30000);}
+document.getElementById('batchCsv').addEventListener('click',()=>{const keys=['id','file','schema','accepted','rejected','pending','approved','trainingPositive','trainingNegative','issues'];const quote=x=>'"'+String(x??'').replaceAll('"','""')+'"';const lines=[keys.join(','),...v11Rows.map(r=>keys.map(k=>quote(k==='issues'?r.issues.join(';'):r[k])).join(','))];v11Download('教師データ管理一覧_v11.csv','\uFEFF'+lines.join('\r\n'),'text/csv;charset=utf-8');});
+document.getElementById('batchJson').addEventListener('click',()=>v11Download('教師データ管理一覧_v11.json',JSON.stringify({schema_version:'index-1.0',generated_at:new Date().toISOString(),images:v11Rows},null,2),'application/json'));
+</script><script>
+// v12: Export only explicitly approved, human-reviewed labels. The index JSON is not an input.
+const dsPanel=document.createElement('section');
+dsPanel.innerHTML=`<h2>⑥ 学習用データセット作成（v12）</h2>
+<p class="muted">⑤で選んだ教師データJSONを使用します。学習承認済みの画像から、正しいタグ（正例）と間違いタグ（負例）のみを出力。未確認・未承認は除外します。元ファイルは変更しません。</p>
+<div class="actions"><button type="button" id="dsBuild">学習用データセットを確認</button><button type="button" class="secondary" id="dsSave" disabled>学習用JSONを保存</button></div>
+<p id="dsMessage" class="muted">⑤でJSONを選んでから実行してください。</p><div id="dsPreview"></div>
+<p class="muted">出力するのはラベル情報のみです。画像本体は含みません。負例は明示的に「間違い」と判定したタグだけです。未確認を負例として扱いません。</p>`;
+document.body.appendChild(dsPanel);
+let dsData=null;
+const dsEl=id=>document.getElementById(id);
+function dsUnique(arr){return [...new Set(Array.isArray(arr)?arr.filter(x=>typeof x==='string'&&x.trim()).map(x=>x.trim()):[])];}
+function dsMakeEntry(j,filename){
+ if(!j||typeof j!=='object'||Array.isArray(j))throw Error('教師データJSONではありません');
+ if(typeof j.image_id!=='string'||!/^IMG_[0-9]+$/i.test(j.image_id))throw Error('画像IDが不正です');
+ const t=j.training_labels;
+ if(!t||!['approved','partially_approved'].includes(t.status)||j.review?.approved_for_training!==true)throw Error('学習未承認');
+ if(t.approval_scope!=='reviewed_tags_only')throw Error('承認範囲が不明');
+ const positives=dsUnique(t.accepted_tags),negatives=dsUnique(t.rejected_tags);
+ const reviewPositive=dsUnique(j.review?.accepted_tags),reviewNegative=dsUnique(j.review?.rejected_tags);
+ const rawNames=new Set((j.ai_prediction?.raw_predictions||[]).map(x=>x.name));
+ if(!positives.length&&!negatives.length)throw Error('承認済みタグが0件');
+ if(positives.some(x=>!reviewPositive.includes(x)||!rawNames.has(x))||negatives.some(x=>!reviewNegative.includes(x)||!rawNames.has(x)))throw Error('判定・予測データとの不整合');
+ if(positives.some(x=>negatives.includes(x)))throw Error('正例と負例が重複');
+ return {image_id:j.image_id,image_filename:j.image_filename||'',source_json:filename,positive_tags:positives,negative_tags:negatives,unreviewed_tags_excluded:true};
+}
+dsEl('dsBuild').addEventListener('click',async()=>{
+ dsData=null;dsEl('dsSave').disabled=true;dsEl('dsPreview').replaceChildren();
+ const files=[...dsEl('batchFiles').files];
+ if(!files.length){dsEl('dsMessage').textContent='先に⑤で教師データJSONを選択してください。';return;}
+ const candidates=[],skipped=[];const counts=new Map();
+ for(const f of files){try{const j=JSON.parse(await f.text());const e=dsMakeEntry(j,f.name);candidates.push(e);counts.set(e.image_id,(counts.get(e.image_id)||0)+1);}catch(err){skipped.push(`${f.name}：${err.message}`);}}
+ const duplicates=new Set([...counts].filter(([id,n])=>n>1).map(([id])=>id));
+ const entries=candidates.filter(e=>{if(duplicates.has(e.image_id)){skipped.push(`${e.source_json}：画像ID重複のため除外`);return false;}return true;}).sort((a,b)=>a.image_id.localeCompare(b.image_id,undefined,{numeric:true}));
+ dsData={schema_version:'training-dataset-1.0',generated_at:new Date().toISOString(),label_policy:'explicit_human_review_only',images:entries};
+ const p=entries.reduce((n,e)=>n+e.positive_tags.length,0),n=entries.reduce((n,e)=>n+e.negative_tags.length,0);
+ dsEl('dsMessage').textContent=`対象画像 ${entries.length}件 / 正例 ${p}件 / 負例 ${n}件 / 除外ファイル ${skipped.length}件`;
+ const div=document.createElement('div');div.className='review-summary';div.textContent=entries.length?entries.map(e=>`${e.image_id}：正例 ${e.positive_tags.length} / 負例 ${e.negative_tags.length}`).join(' ｜ '):'出力対象の承認済み教師データはありません。';dsEl('dsPreview').appendChild(div);
+ if(skipped.length){const d=document.createElement('details'),sm=document.createElement('summary'),pre=document.createElement('p');sm.textContent=`除外理由（${skipped.length}件）`;pre.style.overflowWrap='anywhere';pre.textContent=skipped.join('\n');pre.style.whiteSpace='pre-wrap';d.append(sm,pre);dsEl('dsPreview').appendChild(d);}
+ dsEl('dsSave').disabled=!entries.length;
+});
+dsEl('dsSave').addEventListener('click',()=>{if(!dsData?.images?.length)return;v11Download('学習用データセット_v12.json',JSON.stringify(dsData,null,2),'application/json;charset=utf-8');});
+</script><script>
+// v13: Historical review reference only. Never changes a review state or model prediction.
+const histPanel=document.createElement('section');histPanel.id='historyPanel';
+histPanel.innerHTML=`<h2>⑦ 過去の判定履歴を参考表示（v13）</h2>
+<p class="muted">⑤で選択した教師データJSONの判定履歴を集計します。現在の解析結果に含まれるタグについて、過去に「正しい」「間違い」と判定された回数を表示します。<strong>過去の判定を現在の画像に自動適用することはありません。</strong></p>
+<div class="actions"><button id="histCheck" type="button">履歴を集計・解析結果と照合</button></div>
+<p id="histStatus" class="muted">⑤で教師データJSONを選び、画像を解析したあとに押してください。</p>
+<div id="histResults" style="overflow-x:auto"></div><details><summary>履歴にある全タグの集計を見る</summary><div id="histAll" style="overflow-x:auto"></div></details>
+<p class="muted">過去の頻度はAIの予測確率ではありません。画像が似ていることも保証しません。未確認・学習未承認のタグは集計せず、各画像IDは1件だけ数えます。</p>`;
+document.body.appendChild(histPanel);
+const histCss=document.createElement('style');histCss.textContent=`#historyPanel table{border-collapse:collapse;width:100%;font-size:14px;min-width:400px}#historyPanel th,#historyPanel td{padding:10px;border-bottom:1px solid #e0e6ed;text-align:left}#historyPanel th{background:#eaf0f7}#historyPanel .hist-warn{color:#9e421e}#historyPanel .hist-sum{padding:12px;background:#eef3fa;border-radius:10px;margin:12px 0}`;document.head.appendChild(histCss);
+function histList(a){return [...new Set(Array.isArray(a)?a.filter(x=>typeof x==='string'&&x.trim()).map(x=>x.trim()):[])];}
+function histExtract(j){
+ if(!j||typeof j!=='object'||Array.isArray(j)||typeof j.image_id!=='string'||!j.image_id.trim())throw Error('画像IDなし');
+ const st=j.ai_prediction?.review_states;
+ let yes=[],no=[];
+ if(Array.isArray(st)&&st.length){yes=st.filter(x=>x?.status==='accepted').map(x=>x.name);no=st.filter(x=>x?.status==='rejected').map(x=>x.name);}
+ else {yes=j.review?.accepted_tags||j.ai_prediction?.tag_review?.accepted||[];no=j.review?.rejected_tags||j.ai_prediction?.tag_review?.rejected||[];}
+ yes=histList(yes);no=histList(no);
+ if(yes.some(x=>no.includes(x)))throw Error('正誤が重複');
+ if(!yes.length&&!no.length)throw Error('確認済み判定なし');
+ return {id:j.image_id,yes,no};
+}
+function histTable(target,rows){target.replaceChildren();if(!rows.length){target.textContent='該当するタグはありません。';return;}
+ const table=document.createElement('table'),head=document.createElement('tr');
+ for(const label of ['タグ','過去：正しい','過去：間違い']){const th=document.createElement('th');th.textContent=label;head.appendChild(th);}table.appendChild(head);
+ for(const x of rows){const tr=document.createElement('tr');for(const v of [typeof translateTag==='function'?translateTag(x.tag):x.tag,x.yes,x.no]){const td=document.createElement('td');td.textContent=String(v);tr.appendChild(td);}tr.title=x.tag;table.appendChild(tr);}target.appendChild(table);
+}
+document.getElementById('histCheck').addEventListener('click',async()=>{
+ const status=document.getElementById('histStatus'),out=document.getElementById('histResults'),all=document.getElementById('histAll');out.replaceChildren();all.replaceChildren();
+ const files=[...document.getElementById('batchFiles').files];if(!files.length){status.textContent='先に⑤で教師データJSONを選択してください。';return;}
+ const history=[],errors=[],seen=new Set();
+ for(const f of files){try{const j=JSON.parse(await f.text());const e=histExtract(j);if(seen.has(e.id)){errors.push(`${e.id}：画像ID重複（2件目以降は除外）`);continue;}seen.add(e.id);history.push(e);}catch(err){errors.push(`${f.name}：${err.message}`);}}
+ const counts=new Map();for(const h of history){for(const tag of h.yes){if(!counts.has(tag))counts.set(tag,{tag,yes:0,no:0});counts.get(tag).yes++;}for(const tag of h.no){if(!counts.has(tag))counts.set(tag,{tag,yes:0,no:0});counts.get(tag).no++;}}
+ const rows=[...counts.values()].sort((a,b)=>b.yes+b.no-(a.yes+a.no)||a.tag.localeCompare(b.tag));histTable(all,rows);
+ const current=Array.isArray(lastTags)?lastTags:[];
+ const currentRows=[...new Set(current.map(x=>x.name))].filter(tag=>counts.has(tag)).map(tag=>counts.get(tag));histTable(out,currentRows);
+ status.textContent=`履歴画像 ${history.length}件 / 確認済みタグ ${counts.size}種類 / 現在の解析と一致 ${currentRows.length}種類 / 除外・注意 ${errors.length}件`+(current.length?'':'（まだ画像を解析していません）');
+ if(errors.length){const p=document.createElement('p');p.className='hist-warn';p.textContent=errors.slice(0,4).join(' ／ ');out.appendChild(p);}
+});
+
+// v15: user-owned, presentation-only Japanese dictionary. Never changes canonical tag keys.
+const v15Seed={girl_on_top:'女性が上になる体位',clothed_sex:'着衣での性行為',thigh_boots:'太もも丈のブーツ',straddling:'またがる姿勢',shako_cap:'制帽',white_skirt:'白いスカート',cowgirl_position:'騎乗位',':d':'大きく口を開けた笑顔',red_footwear:'赤い履物',epaulettes:'肩章',white_gloves:'白い手袋',alternate_breast_size:'胸の大きさが異なる',sleeveless:'袖なし',steaming_body:'身体から湯気が出ている',high_heels:'ハイヒール',band_uniform:'楽団の制服',sleeveless_shirt:'袖なしシャツ',happy_sex:'楽しそうな性行為',high_heel_boots:'ヒール付きブーツ'};
+const v15StorageKey='wdtagger_custom_jp_dictionary_v15';
+let v15Custom={};let v15StorageAvailable=true;
+try{const stored=localStorage.getItem(v15StorageKey);if(stored){const obj=JSON.parse(stored);if(obj&&typeof obj==='object'&&!Array.isArray(obj))for(const [k,v] of Object.entries(obj))if(typeof v==='string'&&v.trim())v15Custom[k]=v.trim();}}catch(e){v15StorageAvailable=false;}
+const v14TranslateTag=translateTag;
+translateTag=function(tag){return v15Custom[tag]||v15Seed[tag]||v14TranslateTag(tag);};
+function v15Save(){try{localStorage.setItem(v15StorageKey,JSON.stringify(v15Custom));v15StorageAvailable=true;return true;}catch(e){v15StorageAvailable=false;return false;}}
+function v15Refresh(){
+ for(const el of document.querySelectorAll('#editor [data-v15-label]')){const tag=el.dataset.v15Label;const t=lastTags.find(x=>x.name===tag);el.textContent=translateTag(tag)+(t?' ('+(t.score*100).toFixed(1)+'%)':'');}
+ if(Array.isArray(lastTags)&&lastTags.length){$('tagsOut').textContent=lastTags.map(x=>`${(x.score*100).toFixed(1)}%  ${translateTag(x.name)}  [${categoryNames[String(x.category)]||'その他'}]`).join('\n');}
+ const c=document.getElementById('v15Count');if(c)c.textContent=`登録済みの手動翻訳：${Object.keys(v15Custom).length}件`;
+}
+function v15Export(){const payload={format:'wdtagger_japanese_dictionary',version:1,translations:v15Custom};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='WDTagger_日本語辞書.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);}
+const v15Box=document.createElement('section');v15Box.innerHTML=`<strong>⑧ 日本語翻訳辞書（v15）</strong><p class="muted">各タグの「訳を編集」から日本語表現を変更できます。変更は同じ英語タグに適用されます。<b>正誤判定や学習用JSONの英語タグは変更しません。</b></p><p id="v15Count" class="muted"></p><p id="v15Notice" class="muted"></p><div class="actions"><button type="button" id="v15Export">翻訳辞書を保存</button><label style="display:inline-block;flex:1;min-width:160px">翻訳辞書を読み込む<input id="v15Import" type="file" accept=".json,application/json"></label></div><p class="muted">辞書の読み込みは同名の翻訳だけ上書きします。iPhoneのブラウザ保存領域は消える場合があるので、編集後は必ず辞書JSONも保存してください。</p>`;
+document.body.insertBefore(v15Box,document.querySelector('script'));
+document.getElementById('v15Export').addEventListener('click',v15Export);
+document.getElementById('v15Import').addEventListener('change',async e=>{
+ const f=e.target.files?.[0];if(!f)return;
+ try{const raw=JSON.parse(await f.text());if(raw?.format!=='wdtagger_japanese_dictionary'||raw.version!==1||!raw.translations||typeof raw.translations!=='object'||Array.isArray(raw.translations))throw Error('辞書形式が違います');let n=0;for(const [k,v] of Object.entries(raw.translations)){if(typeof k==='string'&&k.length<160&&typeof v==='string'&&v.trim()&&v.length<200){v15Custom[k]=v.trim();n++;}}const persisted=v15Save();v15Refresh();document.getElementById('v15Notice').textContent=`${n}件の翻訳を読み込みました。${persisted?'端末にも保存しました。':'端末への自動保存は使えません。辞書JSONを保存してください。'}`;}catch(err){document.getElementById('v15Notice').textContent='読み込み失敗：'+err.message;}e.target.value='';
+});
+const v15PreviousRender=renderEditor;
+renderEditor=function(){v15PreviousRender();const root=$('editor');for(const lab of root.querySelectorAll('.tagline')){
+ const sel=lab.querySelector('.review-state');if(!sel)continue;const tag=sel.dataset.tag;const label=lab.querySelector('.taglabel')||lab.querySelector('span');if(!label)continue;
+ label.dataset.v15Label=tag;const edit=document.createElement('button');edit.type='button';edit.className='v15Edit secondary';edit.textContent='訳を編集';edit.title='日本語表示だけを変更';edit.addEventListener('click',()=>{
+  const old=lab.querySelector('.v15Editor');if(old){old.remove();return;}
+  const panel=document.createElement('div');panel.className='v15Editor';const name=document.createElement('small');name.textContent='正式タグ：'+tag;
+  const input=document.createElement('input');input.className='field';input.value='';input.placeholder='新しい日本語訳を入力（現在：'+translateTag(tag)+'）';input.maxLength=200;
+  const save=document.createElement('button');save.type='button';save.textContent='この訳を登録';save.addEventListener('click',()=>{if(!input.value.trim()){alert('日本語訳を入力してください');return;}v15Custom[tag]=input.value.trim();const persisted=v15Save();v15Refresh();panel.remove();document.getElementById('v15Notice').textContent=persisted?'翻訳を更新しました。辞書JSONの保存もおすすめします。':'翻訳を更新しました。端末への自動保存ができないため辞書JSONを保存してください。';});
+  const revert=document.createElement('button');revert.type='button';revert.className='secondary';revert.textContent='標準訳に戻す';revert.addEventListener('click',()=>{delete v15Custom[tag];v15Save();v15Refresh();panel.remove();});
+  const current=document.createElement('p');current.className='muted';current.textContent='現在の訳：'+translateTag(tag);panel.append(name,current,input,save,revert);lab.appendChild(panel);input.focus();
+ });lab.appendChild(edit);
+ }v15Refresh();};
+const v15Style=document.createElement('style');v15Style.textContent='.tagline .v15Edit{font-size:12px;padding:7px 9px;grid-column:1 / -1;justify-self:start}.tagline .v15Editor{grid-column:1 / -1;width:100%;background:#f1f5fa;border-radius:10px;padding:10px;box-sizing:border-box}.v15Editor button{margin:3px 6px 3px 0;padding:9px;font-size:14px}';document.head.appendChild(v15Style);
+v15Refresh();
+
+// v16: optional excluded status, independent outfit preset registry, improved iPhone editor.
+const v16CSS=document.createElement('style');v16CSS.textContent=`
+.v15Editor{display:block!important;flex:0 0 100%!important;min-width:100%!important;max-width:100%!important;}
+.v15Editor .field{display:block!important;width:100%!important;min-width:100%!important;box-sizing:border-box!important;min-height:54px!important;font-size:18px!important;padding:14px!important;background:#fff!important;color:#162237!important;}
+.v15Editor .muted{overflow-wrap:anywhere}.outfit-box{background:#f4f7fc;border:1px solid #dce3ee;border-radius:10px;padding:12px;margin:10px 0}
+.outfit-box input,.outfit-box select{display:block;width:100%;box-sizing:border-box;min-height:46px;padding:10px;font-size:16px;border:1px solid #c7d2e2;border-radius:8px;margin:6px 0 12px}
+.outfit-box button{margin:4px 6px 4px 0}.outfit-row{border-bottom:1px solid #dce3ee;padding:9px 0;overflow-wrap:anywhere}
+`;document.head.appendChild(v16CSS);
+const v16OldRender=renderEditor;
+renderEditor=function(){v16OldRender();for(const sel of document.querySelectorAll('#editor .review-state')){
+ if(![...sel.options].some(o=>o.value==='excluded')){const o=document.createElement('option');o.value='excluded';o.textContent='不要';sel.appendChild(o);}
+ const old=existingJson?.ai_prediction?.review_states?.find(x=>x.name===sel.dataset.tag&&String(x.category)===sel.dataset.category);
+ if(old?.status==='excluded')sel.value='excluded';
+ const lab=sel.closest('.tagline');if(lab&&!lab.querySelector('.v16Outfit')){const b=document.createElement('button');b.type='button';b.className='secondary v16Outfit';b.textContent='衣装として登録';b.style.cssText='font-size:12px;padding:7px 9px';b.addEventListener('click',()=>v16OpenOutfit(sel.dataset.tag));lab.appendChild(b);}
+ }updateReviewSummary();};
+const v16OldSummary=updateReviewSummary;
+updateReviewSummary=function(){v16OldSummary();const e=$('reviewSummary');if(e)e.textContent+=' / 不要 '+document.querySelectorAll('#editor .review-state').length+'件中 '+[...document.querySelectorAll('#editor .review-state')].filter(x=>x.value==='excluded').length+'件';};
+const v16OldBuild=buildJson;
+buildJson=function(){const j=v16OldBuild();const excluded=[...document.querySelectorAll('#editor .review-state')].filter(x=>x.value==='excluded').map(x=>x.dataset.tag);const accepted=[...document.querySelectorAll('#editor .review-state')].filter(x=>x.value==='accepted').map(x=>x.dataset.tag);const rejected=[...document.querySelectorAll('#editor .review-state')].filter(x=>x.value==='rejected').map(x=>x.dataset.tag);const pending=[...document.querySelectorAll('#editor .review-state')].filter(x=>x.value==='pending').map(x=>x.dataset.tag);
+ j.ai_prediction.tag_review={accepted,rejected,pending,excluded};j.ai_prediction.review_states=[...document.querySelectorAll('#editor .review-state')].map(x=>({name:x.dataset.tag,category:Number(x.dataset.category),status:x.value,score:Math.round((lastTags.find(t=>t.name===x.dataset.tag)?.score||0)*10000)/10000}));
+ if(j.review){j.review.accepted_tags=accepted;j.review.rejected_tags=rejected;j.review.pending_tags=pending;j.review.excluded_tags=excluded;j.review.note='Excluded and pending tags are not used for training.';}
+ j.excluded_tags=excluded;
+ return j;};
+const v16StoreKey='wdtagger_outfits_v16';let v16Outfits=[];
+try{const x=JSON.parse(localStorage.getItem(v16StoreKey)||'[]');if(Array.isArray(x))v16Outfits=x;}catch(e){}
+function v16Persist(){try{localStorage.setItem(v16StoreKey,JSON.stringify(v16Outfits));return true;}catch(e){return false;}}
+function v16Download(name,data){const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const u=URL.createObjectURL(blob),a=document.createElement('a');a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),3000);}
+const v16Section=document.createElement('section');v16Section.innerHTML=`<strong>⑨ 衣装プリセット（v16）</strong><p class="muted">衣装シリーズの中に、登録順でNo.1、No.2…を作ります。別キャラクターに着せるための参考情報として管理します。画像を解析後、タグの「衣装として登録」からも追加できます。</p><div class="outfit-box"><label>衣装シリーズ名<input id="v16Series" placeholder="例：花咲川女子学園の制服"></label><label>衣装の元キャラクター<input id="v16Char" placeholder="例：戸山香澄"></label><label>衣装の特徴・補足<textarea id="v16Desc" class="field" placeholder="例：赤いリボン、紺色の上着"></textarea></label><p id="v16Source" class="muted">元タグ：手動登録</p><button type="button" id="v16Add">この衣装を登録</button><p id="v16Msg" class="muted"></p></div><strong>登録済みの衣装</strong><div id="v16List"></div><div class="actions"><button type="button" id="v16Export">衣装プリセットJSONを保存</button><label>衣装プリセットJSONを読み込む<input type="file" id="v16Import" accept=".json,application/json"></label></div><p class="muted">端末の保存領域は消えることがあります。衣装を登録したらJSONも保存してください。衣装の参考画像本体はJSONには埋め込まず、画像IDとファイル名を記録します。</p>`;
+document.body.insertBefore(v16Section,document.querySelector('script'));
+let v16SourceTag='';
+function v16OpenOutfit(tag){v16SourceTag=tag;$('v16Series').value=translateTag(tag);$('v16Char').value=$('charName').value.trim();$('v16Source').textContent='元タグ：'+tag+' / 元画像：'+($('img').files[0]?.name||'未選択');v16Section.scrollIntoView({behavior:'smooth',block:'start'});}
+function v16Render(){const root=$('v16List');root.replaceChildren();if(!v16Outfits.length){root.textContent='まだ登録されていません。';return;}const grouped=new Map();for(const x of v16Outfits){if(!grouped.has(x.series))grouped.set(x.series,[]);grouped.get(x.series).push(x);}for(const [series,entries] of grouped){const box=document.createElement('div');box.className='outfit-box';const h=document.createElement('strong');h.textContent=series+'（'+entries.length+'件）';box.appendChild(h);for(const e of entries){const r=document.createElement('div');r.className='outfit-row';const no=entries.indexOf(e)+1;r.textContent='No.'+no+' '+e.character+' / '+(e.image_id||'画像未設定')+(e.description?' / '+e.description:'');const del=document.createElement('button');del.type='button';del.className='secondary';del.textContent='削除';del.style.cssText='font-size:12px;padding:6px 10px;margin-left:8px';del.addEventListener('click',()=>{if(!confirm('この衣装登録を削除しますか？'))return;v16Outfits=v16Outfits.filter(x=>x.id!==e.id);v16Persist();v16Render();});r.appendChild(del);box.appendChild(r);}root.appendChild(box);}}
+$('v16Add').addEventListener('click',()=>{const series=$('v16Series').value.trim(),character=$('v16Char').value.trim();if(!series||!character){$('v16Msg').textContent='衣装シリーズ名と元キャラクター名を入力してください。';return;}const image=$('img').files[0],imageId=image?.name.replace(/\.[^.]+$/,'')||'';const duplicate=v16Outfits.find(x=>x.series===series&&x.character===character);if(duplicate){$('v16Msg').textContent='同じシリーズとキャラクターは登録済みです。重複登録を防止しました。';return;}v16Outfits.push({id:'outfit_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),series,character,description:$('v16Desc').value.trim(),source_tag:v16SourceTag,image_id:imageId,image_filename:image?.name||'',created_at:new Date().toISOString()});const saved=v16Persist();v16Render();$('v16Msg').textContent='登録しました。'+(saved?'':'端末保存に失敗したため、必ずJSONを保存してください。')+' JSONのバックアップもおすすめします。';v16SourceTag='';$('v16Source').textContent='元タグ：手動登録';});
+$('v16Export').addEventListener('click',()=>v16Download('WDTagger_衣装プリセット.json',{format:'wdtagger_outfit_presets',version:1,outfits:v16Outfits}));
+$('v16Import').addEventListener('change',async e=>{const f=e.target.files?.[0];if(!f)return;try{const data=JSON.parse(await f.text());if(data?.format!=='wdtagger_outfit_presets'||data.version!==1||!Array.isArray(data.outfits))throw Error('衣装プリセットJSONではありません');let added=0;for(const x of data.outfits){if(!x||typeof x.series!=='string'||typeof x.character!=='string'||!x.series.trim()||!x.character.trim())continue;if(v16Outfits.some(y=>y.series===x.series&&y.character===x.character))continue;v16Outfits.push({id:'import_'+Date.now()+'_'+added,series:x.series,character:x.character,description:String(x.description||''),source_tag:String(x.source_tag||''),image_id:String(x.image_id||''),image_filename:String(x.image_filename||''),created_at:String(x.created_at||'')});added++;}v16Persist();v16Render();$('v16Msg').textContent=added+'件の衣装を読み込みました。';}catch(err){$('v16Msg').textContent='読み込み失敗：'+err.message;}e.target.value='';});
+v16Render();
+
+// v17: Hybrid dictionary + explicit online fallback. Canonical tags and teacher JSON unchanged.
+const v17Bad=/^(?:固有名詞・専門用語（原語）\s*[:：]|暫定訳\s*[:：]|【要確認】)/;
+const v17SavedTranslate=translateTag;
+const v17CacheKey='wdtagger_v17_online_translations';
+let v17Cache={};try{v17Cache=JSON.parse(localStorage.getItem(v17CacheKey)||'{}')||{}}catch(e){}
+const v17Words={drooling:'よだれを垂らす',multiple_tails:'複数の尻尾',hooded_jacket:'フード付きジャケット',armband:'腕章',foreshortening:'遠近短縮法',hakama:'袴',steam:'湯気',casual:'普段着',gauntlets:'籠手',rope:'縄',china_dress:'チャイナドレス',couch:'ソファ',beard:'ひげ',corset:'コルセット',tentacles:'触手',eyeshadow:'アイシャドウ',science_fiction:'SF',reverse_suspended_congress:'逆吊り性交位',reverse_suspended_congress_position:'逆吊り性交位'};
+const v17Parts={black:'黒い',white:'白い',red:'赤い',blue:'青い',green:'緑の',pink:'ピンクの',yellow:'黄色い',purple:'紫の',brown:'茶色い',grey:'灰色の',orange:'オレンジ色の',long:'長い',short:'短い',multiple:'複数の',single:'片方の',striped:'縞模様の',frilled:'フリル付き',hair:'髪',eyes:'目',skirt:'スカート',dress:'ドレス',shirt:'シャツ',jacket:'ジャケット',socks:'靴下',gloves:'手袋',ribbon:'リボン',bow:'蝶結び',ears:'耳',tail:'尻尾',wings:'翼',background:'背景',flower:'花',hat:'帽子',pants:'ズボン',shoes:'靴'};
+function v17Local(tag){if(v17Words[tag])return v17Words[tag];const parts=tag.split('_');if(parts.length===2&&v17Parts[parts[0]]&&v17Parts[parts[1]])return v17Parts[parts[0]]+v17Parts[parts[1]];return '';}
+function v17Resolved(tag){const manual=v15Custom[tag];if(manual&&!v17Bad.test(manual))return manual;if(v17Cache[tag])return v17Cache[tag];const local=v17Local(tag);if(local)return local;const seed=v17SavedTranslate(tag);return seed&&!v17Bad.test(seed)?seed:tag.replaceAll('_',' ');}
+translateTag=function(tag){return v17Resolved(tag)};
+function v18LooksUntranslated(tag,value){
+ const v=String(value||'').trim();
+ if(!v||v17Bad.test(v))return true;
+ const raw=tag.replaceAll('_',' ').toLowerCase();
+ const clean=v.replace(/^固有名詞・専門用語（原語）\s*[:：]\s*/,'').trim().toLowerCase();
+ if(clean===raw||clean===tag.toLowerCase())return true;
+ // A Japanese dictionary entry consisting solely of Latin words is not considered translated.
+ return !/[\u3040-\u30ff\u3400-\u9fff]/.test(v) && /[a-zA-Z]/.test(v);
+}
+function v17IsPending(tag){
+ const manual=v15Custom[tag];
+ if(manual&&!v18LooksUntranslated(tag,manual))return false;
+ const cache=v17Cache[tag];
+ if(cache&&!v18LooksUntranslated(tag,cache))return false;
+ const local=v17Local(tag);
+ if(local&&!v18LooksUntranslated(tag,local))return false;
+ const seed=v17SavedTranslate(tag);
+ if(seed&&!v18LooksUntranslated(tag,seed))return false;
+ return true;
+}
+// Preserve good translations, but never show a known placeholder as a valid translation.
+function v18Resolved(tag){
+ const manual=v15Custom[tag];if(manual&&!v18LooksUntranslated(tag,manual))return manual;
+ const cache=v17Cache[tag];if(cache&&!v18LooksUntranslated(tag,cache))return cache;
+ const local=v17Local(tag);if(local&&!v18LooksUntranslated(tag,local))return local;
+ const seed=v17SavedTranslate(tag);if(seed&&!v18LooksUntranslated(tag,seed))return seed;
+ return tag.replaceAll('_',' ');
+}
+translateTag=v18Resolved;
+
+const v17Box=document.createElement('section');v17Box.innerHTML=`<strong>⑨ 未翻訳タグの自動翻訳（v18・C方式）</strong><p class="muted">辞書→端末内ルール→オンライン翻訳の順に使用。オンライン翻訳は明示的に実行した時だけ英語タグを外部サービス（MyMemory）へ送信します。画像・教師JSONは送信しません。無料APIは通信・CORS・回数制限や成人向け語句の翻訳失敗があります。</p><label><input type="checkbox" id="v17Online"> オンライン翻訳を許可する（英語タグのみ外部送信）</label><div class="actions"><button type="button" id="v17Translate">現在の画像の未翻訳タグを翻訳（最大30件ずつ）</button><button type="button" id="v17All" class="secondary">辞書の未翻訳タグをまとめて翻訳（最大30件/回）</button><button type="button" id="v17Clean" class="secondary">暫定訳・原語表示を一括除去</button></div><p id="v17Status" class="muted">準備完了。オフライン時は原語を表示します。</p><p class="muted">オンライン翻訳の結果は端末に一時保存され、辞書JSON保存時にも含まれます。誤訳は従来の「訳を編集」で修正してください。</p>`;
+document.body.insertBefore(v17Box,document.querySelector('script'));
+function v17Status(t){document.getElementById('v17Status').textContent=t;}
+function v17Refresh(){v15Refresh();}
+function v17Clean(){let n=0;for(const [k,v] of Object.entries(v15Custom)){if(v17Bad.test(v)){delete v15Custom[k];n++;}}v15Save();v17Refresh();v17Status(`${n}件の暫定表示を削除。元の英語タグは変更していません。修正後の辞書を保存してください。`);}
+document.getElementById('v17Clean').addEventListener('click',()=>{if(confirm('「固有名詞・専門用語（原語）」と「暫定訳」の登録だけを辞書から削除します。よろしいですか？'))v17Clean()});
+async function v17TranslateList(tags){if(!document.getElementById('v17Online').checked){v17Status('オンライン翻訳を使う場合は、先に許可へチェックしてください。');return;}const allPending=[...new Set(tags)].filter(v17IsPending);const pending=allPending.slice(0,30);if(!pending.length){v17Status('今回の対象に未翻訳タグはありません。');return;}let ok=0,fail=0;for(let i=0;i<pending.length;i++){const tag=pending[i];v17Status(`翻訳中 ${i+1}/${pending.length}：${tag} （成功${ok}／失敗${fail}）`);try{const url='https://api.mymemory.translated.net/get?q='+encodeURIComponent(tag.replaceAll('_',' '))+'&langpair=en|ja';const response=await fetch(url,{method:'GET',mode:'cors'});if(!response.ok)throw Error('HTTP '+response.status);const data=await response.json();const result=String(data?.responseData?.translatedText||'').trim();if(!result||v18LooksUntranslated(tag,result)||/<[^>]+>/.test(result)||Number(data.responseStatus)!==200)throw Error('翻訳結果なし');v17Cache[tag]=result;delete v15Custom[tag];ok++;}catch(e){fail++;}if((i+1)%5===0){try{localStorage.setItem(v17CacheKey,JSON.stringify(v17Cache))}catch(e){}v17Refresh();}}
+try{localStorage.setItem(v17CacheKey,JSON.stringify(v17Cache))}catch(e){}v15Save();v17Refresh();const remaining=[...new Set(tags)].filter(v17IsPending).length;v17Status(`完了：成功${ok}件／失敗${fail}件／未翻訳残り${remaining}件。残りがある場合はもう一度押してください。英語を返した翻訳は失敗扱いです。辞書JSONを保存してください。`);}
+document.getElementById('v17Translate').addEventListener('click',()=>v17TranslateList(lastTags.map(x=>x.name)));
+document.getElementById('v17All').addEventListener('click',()=>v17TranslateList(Object.keys(v15Custom)));
+const v17OldExport=v15Export;
+v15Export=function(){const translations={...v15Custom,...v17Cache};const payload={format:'wdtagger_japanese_dictionary',version:1,translations};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='WDTagger_日本語辞書_v18.json';document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000);};
+// Existing event listener captured old function; rebind export button to the v17 format.
+const v17ExportBtn=document.getElementById('v15Export');const v17NewBtn=v17ExportBtn.cloneNode(true);v17ExportBtn.replaceWith(v17NewBtn);v17NewBtn.addEventListener('click',v15Export);
+</script></body></html>
