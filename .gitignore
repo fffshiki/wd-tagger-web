@@ -18,6 +18,7 @@
 !/web/js/v18-dataset.js
 !/web/js/v18-extensions.js
 !/web/js/compatibility.js
+!/web/js/data-compatibility.js
 !/web/js/tag-catalog.js
 !/scripts/
 /scripts/*
@@ -27,6 +28,7 @@
 /tests/*
 !/tests/migration.test.mjs
 !/tests/browser.test.mjs
+!/tests/data-compatibility.test.mjs
 !/docs/
 /docs/*
 !/docs/COMPATIBILITY.md

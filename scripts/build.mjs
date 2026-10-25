@@ -5,7 +5,7 @@ import path from 'node:path';
 export const root = fileURLToPath(new URL('../', import.meta.url));
 export const publicFiles = [
   'index.html', 'css/app.css', 'js/v18-core.js', 'js/v18-dataset.js',
-  'js/v18-extensions.js', 'js/compatibility.js',
+  'js/v18-extensions.js', 'js/compatibility.js', 'js/data-compatibility.js',
 ];
 
 export async function build() {

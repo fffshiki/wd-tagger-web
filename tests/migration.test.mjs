@@ -30,9 +30,10 @@ test('HTML retains original markup and classic script execution order', async ()
   let i = 0;
   const expected = source.replace(/<style>[\s\S]*?<\/style>/, '<link rel="stylesheet" href="./css/app.css">')
     .replace(/<script>[\s\S]*?<\/script>/g, () => `<script src="./js/${names[i++]}"></script>`)
-    .replace('</body>', '<script src="./js/compatibility.js"></script></body>');
+    .replace('</body>', '<script src="./js/compatibility.js"></script><script src="./js/data-compatibility.js"></script></body>');
   assert.equal(await readFile(new URL('../web/index.html', import.meta.url), 'utf8'), expected);
   new Script(await readFile(new URL('../web/js/compatibility.js', import.meta.url), 'utf8'));
+  new Script(await readFile(new URL('../web/js/data-compatibility.js', import.meta.url), 'utf8'));
 });
 
 test('private artifacts are ignored by Git while source and tests are allowed', () => {

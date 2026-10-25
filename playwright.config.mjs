@@ -2,7 +2,7 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests',
-  testMatch: 'browser.test.mjs',
+  testMatch: ['browser.test.mjs', 'data-compatibility.test.mjs'],
   fullyParallel: false,
   workers: 1,
   reporter: 'list',
